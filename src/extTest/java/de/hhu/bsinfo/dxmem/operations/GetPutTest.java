@@ -16,20 +16,19 @@
 
 package de.hhu.bsinfo.dxmem.operations;
 
+import de.hhu.bsinfo.dxmem.DXMem;
+import de.hhu.bsinfo.dxmem.DXMemTestUtils;
+import de.hhu.bsinfo.dxmem.DXMemoryTestConstants;
+import de.hhu.bsinfo.dxmem.TestVertixChunk;
+import de.hhu.bsinfo.dxmem.data.ChunkByteArray;
+import de.hhu.bsinfo.dxutils.RandomUtils;
+import de.hhu.bsinfo.dxutils.unit.StorageUnit;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.core.config.Configurator;
 import org.junit.Assert;
 import org.junit.Test;
-
-import de.hhu.bsinfo.dxmem.DXMem;
-import de.hhu.bsinfo.dxmem.DXMemTestUtils;
-import de.hhu.bsinfo.dxmem.DXMemoryTestConstants;
-import de.hhu.bsinfo.dxmem.TestChunk;
-import de.hhu.bsinfo.dxmem.data.ChunkByteArray;
-import de.hhu.bsinfo.dxutils.RandomUtils;
-import de.hhu.bsinfo.dxutils.unit.StorageUnit;
 
 public class GetPutTest {
     private static final Logger LOGGER = LogManager.getFormatterLogger(GetPutTest.class.getSimpleName());
@@ -139,8 +138,8 @@ public class GetPutTest {
 
     @Test
     public void putGetTestChunk4() {
-        Configurator.setRootLevel(Level.TRACE);
-        putGetTestChunk(1000, DXMemoryTestConstants.HEAP_SIZE_LARGE);
+        Configurator.setRootLevel(Level.INFO);
+        putGetTestChunk(145050709, DXMemoryTestConstants.HEAP_SIZE_LARGE);
     }
 
     @Test
@@ -198,35 +197,52 @@ public class GetPutTest {
 
         DXMem memory = new DXMem(DXMemoryTestConstants.NODE_ID, p_heapSize);
 
-        TestChunk[] chunks = new TestChunk[p_count];
+        TestVertixChunk[] chunks = new TestVertixChunk[p_count];
 
         for (int i = 0; i < p_count; i++) {
-            chunks[i] = new TestChunk(true);
-            memory.create().create(chunks[i]);
-
+            if(i % 10_000_000 == 0) {
+                LOGGER.info(memory.create().getCIDStoreInfo().toString());
+                LOGGER.info(""+i);
+            }
+            if(i % 1_000_000 == 0) {
+                LOGGER.info("still running");
+            }
+            chunks[i] = new TestVertixChunk(i);
+            memory.create().testCreate(chunks[i]);
             Assert.assertTrue(chunks[i].isStateOk());
             Assert.assertTrue(chunks[i].isIDValid());
         }
 
+        /*
+        memory.remove().remove(chunks[0].getID());
+        memory.remove().remove(chunks[1].getID());
+
+        chunks[0] = new TestChunk(true);
+        chunks[1] = new TestChunk(true);
+
+        memory.create().create(chunks[0]);
+        memory.create().create(chunks[1]);
+
+
         Assert.assertTrue(memory.analyze().analyze());
 
-        for (TestChunk chunk : chunks) {
+        for (TestVertixChunk chunk : chunks) {
             memory.put().put(chunk);
             Assert.assertTrue(chunk.isStateOk());
-            chunk.clear();
+           // chunk.clear();
         }
 
-        for (TestChunk chunk : chunks) {
+        for (TestVertixChunk chunk : chunks) {
             memory.get().get(chunk);
             Assert.assertTrue(chunk.isStateOk());
-            chunk.verifyContents();
+            //chunk.verifyContents();
         }
 
-        for (TestChunk chunk : chunks) {
+        for (TestVertixChunk chunk : chunks) {
             memory.remove().remove(chunk);
             Assert.assertTrue(chunk.isStateOk());
         }
-
+*/
         memory.shutdown();
     }
 }

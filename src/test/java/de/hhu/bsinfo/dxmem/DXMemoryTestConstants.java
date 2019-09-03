@@ -21,7 +21,7 @@ public final class DXMemoryTestConstants {
 
     public static final long HEAP_SIZE_SMALL = 1024 * 1024;
     public static final long HEAP_SIZE_MEDIUM = 1024 * 1024 * 128;
-    public static final long HEAP_SIZE_LARGE = 1024 * 1024 * 1024 * 4L;
+    public static final long HEAP_SIZE_LARGE = 1024 * 1024 * 1024 * 3L;
 
     public static final int CHUNK_SIZE_1 = 1;
     public static final int CHUNK_SIZE_2 = 16;

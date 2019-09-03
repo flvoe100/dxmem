@@ -261,7 +261,7 @@ public class Remove {
         m_context.getCIDTable().entryFlagFree(tableEntry);
 
         // only lids of non migrated chunks go back into the lid store
-        if (!p_wasMigrated && !m_context.getLIDStore().put(p_cid)) {
+        if (!p_wasMigrated && !m_context.getLIDStore().put(ChunkID.getLocalID(p_cid))) {
             // lid store full, flag as zombie
             m_context.getCIDTable().entryFlagZombie(tableEntry);
         }

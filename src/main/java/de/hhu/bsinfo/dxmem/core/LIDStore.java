@@ -16,16 +16,15 @@
 
 package de.hhu.bsinfo.dxmem.core;
 
+import de.hhu.bsinfo.dxmem.data.ChunkID;
+import de.hhu.bsinfo.dxutils.serialization.*;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-
-import de.hhu.bsinfo.dxmem.data.ChunkID;
-import de.hhu.bsinfo.dxutils.serialization.Exportable;
-import de.hhu.bsinfo.dxutils.serialization.Exporter;
-import de.hhu.bsinfo.dxutils.serialization.Importable;
-import de.hhu.bsinfo.dxutils.serialization.Importer;
-import de.hhu.bsinfo.dxutils.serialization.ObjectSizeUtil;
+import java.util.stream.LongStream;
 
 /**
  * Stores free LocalIDs
@@ -35,6 +34,7 @@ import de.hhu.bsinfo.dxutils.serialization.ObjectSizeUtil;
  */
 public final class LIDStore implements Importable, Exportable {
     private static final int STORE_CAPACITY = 100000;
+    private static final long LOCALID_BITMASK = 0x0000FFFFFFFFFFFFL;
 
     private SpareLIDStore m_spareLIDStore;
     private AtomicLong m_localIDCounter;
@@ -50,10 +50,8 @@ public final class LIDStore implements Importable, Exportable {
     /**
      * Creates an instance of LIDStore
      *
-     * @param p_ownNodeId
-     *         Node id of current instance
-     * @param p_cidTable
-     *         CIDTable instance
+     * @param p_ownNodeId Node id of current instance
+     * @param p_cidTable  CIDTable instance
      */
     LIDStore(final short p_ownNodeId, final CIDTable p_cidTable) {
         m_spareLIDStore = new SpareLIDStore(p_ownNodeId, p_cidTable, STORE_CAPACITY);
@@ -106,15 +104,13 @@ public final class LIDStore implements Importable, Exportable {
         return ret;
     }
 
+
     /**
      * Get multiple LIDs from the store
      *
-     * @param p_lids
-     *         Array to write LIDs to
-     * @param p_offset
-     *         Offset to start in Array
-     * @param p_count
-     *         Number of LIDs to get
+     * @param p_lids   Array to write LIDs to
+     * @param p_offset Offset to start in Array
+     * @param p_count  Number of LIDs to get
      */
     public void get(final long[] p_lids, final int p_offset, final int p_count) {
         assert p_lids != null;
@@ -151,15 +147,32 @@ public final class LIDStore implements Importable, Exportable {
         }
     }
 
+    public void insert(final long p_lid) {
+        assert p_lid <= ChunkID.MAX_LOCALID;
+
+        if (p_lid < m_localIDCounter.get()) {
+            if (m_spareLIDStore.containsLID(p_lid)) {
+                //get the specific lid out of store
+                //TODO
+                m_spareLIDStore.get(p_lid);
+            }
+            //error lid is in use!
+        } else if (p_lid > m_localIDCounter.get()) {
+            //put lid into spare until p_lid
+            long[] p_sparseLocalIDs = LongStream.range(m_localIDCounter.get(), p_lid).toArray();
+            m_spareLIDStore.put(p_sparseLocalIDs);
+            get();
+        } else {
+            get();
+        }
+    }
+
     /**
      * Get multiple consecutive LIDs
      *
-     * @param p_lids
-     *         Array to write LIDs to
-     * @param p_offset
-     *         Offset to start in Array
-     * @param p_count
-     *         Number of LIDs to get
+     * @param p_lids   Array to write LIDs to
+     * @param p_offset Offset to start in Array
+     * @param p_count  Number of LIDs to get
      */
     public void getConsecutive(final long[] p_lids, final int p_offset, final int p_count) {
         assert p_lids != null;
@@ -190,8 +203,7 @@ public final class LIDStore implements Importable, Exportable {
     /**
      * Puts a free LID back
      *
-     * @param p_lid
-     *         LID to put back
+     * @param p_lid LID to put back
      * @return True if adding an entry to store was successful, false otherwise (full)
      */
     public boolean put(final long p_lid) {
@@ -238,6 +250,9 @@ public final class LIDStore implements Importable, Exportable {
 
         private final Lock m_ringBufferLock = new ReentrantLock(false);
 
+        private static final Logger LOGGER = LogManager.getFormatterLogger(SpareLIDStore.class.getSimpleName());
+
+
         /**
          * Constructor for importing from memory dump
          */
@@ -248,12 +263,9 @@ public final class LIDStore implements Importable, Exportable {
         /**
          * Constructor
          *
-         * @param p_ownNodeId
-         *         Node id of current instance
-         * @param p_cidTable
-         *         CIDTable instance
-         * @param p_capacity
-         *         Capacity of store
+         * @param p_ownNodeId Node id of current instance
+         * @param p_cidTable  CIDTable instance
+         * @param p_capacity  Capacity of store
          */
         SpareLIDStore(final short p_ownNodeId, final CIDTable p_cidTable, final int p_capacity) {
             m_ownNodeId = p_ownNodeId;
@@ -296,15 +308,73 @@ public final class LIDStore implements Importable, Exportable {
             return ret;
         }
 
+        private long getSparseLocalID(boolean isInterval, long lid) {
+            return (long) (isInterval ? (short) 1 : (short) 0) << 48 | lid & LOCALID_BITMASK;
+        }
+
+        public long get(final long p_lid) {
+            long ret = -1;
+
+            if (m_overallCount > 0) {
+                m_ringBufferLock.lock();
+
+                if (m_count == 0 && m_overallCount > 0) {
+                    // ignore return value
+                    refillStore();
+                }
+
+                if (m_count > 0) {
+
+                    int p_currentPos = m_getPosition;
+                    while (p_currentPos > 0) {
+                        long p_localSpareLocalID = m_ringBufferSpareLocalIDs[p_currentPos];
+                        if (p_localSpareLocalID == p_lid) {
+                            break;
+                        }
+                        p_currentPos = (p_currentPos - 1) % m_ringBufferSpareLocalIDs.length;
+                    }
+
+
+                    m_getPosition = (m_getPosition + 1) % m_ringBufferSpareLocalIDs.length;
+                    m_count--;
+                    m_overallCount--;
+                }
+
+                m_ringBufferLock.unlock();
+            }
+
+            return ret;
+        }
+
+        public boolean containsLID(final long lid) {
+            if (m_overallCount > 0) {
+                m_ringBufferLock.lock();
+                if (m_count == 0 && m_overallCount > 0) {
+                    // ignore return value
+                    refillStore();
+                }
+
+                if (m_count > 0) {
+                    int p_currentPos = m_getPosition;
+                    do {
+                        long p_localSpareLocalID = m_ringBufferSpareLocalIDs[p_currentPos];
+                        if (p_localSpareLocalID == lid) {
+                            return true;
+                        }
+                        p_currentPos = (p_currentPos - 1) % m_ringBufferSpareLocalIDs.length;
+                    } while (p_currentPos > 0);
+                }
+                m_ringBufferLock.unlock();
+            }
+            return false;
+        }
+
         /**
          * Get multiple LIDs from the store
          *
-         * @param p_lids
-         *         Array to write LIDs to
-         * @param p_offset
-         *         Offset to start in Array
-         * @param p_count
-         *         Number of LIDs to get
+         * @param p_lids   Array to write LIDs to
+         * @param p_offset Offset to start in Array
+         * @param p_count  Number of LIDs to get
          * @return Number of LIDs returned. If less than p_count, store is empty and no zombies are available anymore
          */
         public int get(final long[] p_lids, final int p_offset, final int p_count) {
@@ -344,18 +414,41 @@ public final class LIDStore implements Importable, Exportable {
         /**
          * Put a LID to the store
          *
-         * @param p_lid
-         *         LID to add to the store
+         * @param p_lid LID to add to the store
          * @return True if successful, false if store is full (callers has to treat chunk as a zombie)
          */
         public boolean put(final long p_lid) {
             boolean ret;
-
+            System.out.println("p_lid = " + p_lid);
             m_ringBufferLock.lock();
 
             if (m_count < m_ringBufferSpareLocalIDs.length) {
-                m_ringBufferSpareLocalIDs[m_putPosition] = p_lid;
+                int p_latestPutPosition = (m_putPosition - 1) % m_ringBufferSpareLocalIDs.length;
+                if (p_latestPutPosition >= 0) {
+                    long diff = p_lid - m_ringBufferSpareLocalIDs[p_latestPutPosition];
+                    if (diff > 1) {
+                        m_ringBufferSpareLocalIDs[p_latestPutPosition] = getSparseLocalID(true, m_ringBufferSpareLocalIDs[p_latestPutPosition]);
+                        m_putPosition = (m_putPosition + 1) % m_ringBufferSpareLocalIDs.length;
+                        m_ringBufferSpareLocalIDs[m_putPosition] = getSparseLocalID(false, p_lid);
 
+                    } else {
+                        m_ringBufferSpareLocalIDs[m_putPosition] = getSparseLocalID(false, p_lid);
+                    }
+                } else {
+                    //no entry yet -> when interval save 2
+                    long diff = p_lid - 0; //0 is initial value
+                    if (diff > 1) {
+                        //save 1 bit for flag to print if interval or not
+                        long startInterval = getSparseLocalID(true, 0);
+                        m_ringBufferSpareLocalIDs[m_putPosition] = startInterval;
+                        m_putPosition = (m_putPosition + 1) % m_ringBufferSpareLocalIDs.length;
+                        m_ringBufferSpareLocalIDs[m_putPosition] = getSparseLocalID(false, p_lid);
+
+                    } else {
+                        m_ringBufferSpareLocalIDs[m_putPosition] = getSparseLocalID(false, p_lid);
+                    }
+                }
+                //[m_putPosition] = p_lid;
                 m_putPosition = (m_putPosition + 1) % m_ringBufferSpareLocalIDs.length;
                 m_count++;
 
@@ -367,9 +460,37 @@ public final class LIDStore implements Importable, Exportable {
             m_overallCount++;
 
             m_ringBufferLock.unlock();
-
             return ret;
         }
+
+        /**
+         * Put a LID to the store
+         *
+         * @param p_lids LID to add to the store
+         * @return True if successful, false if store is full (callers has to treat chunk as a zombie)
+         */
+        public boolean put(final long[] p_lids) {
+            boolean ret;
+
+            m_ringBufferLock.lock();
+
+            if (m_count + p_lids.length - 1 < m_ringBufferSpareLocalIDs.length) {
+                for (long p_lid : p_lids) {
+                    m_ringBufferSpareLocalIDs[m_putPosition] = p_lid;
+                    m_putPosition = (m_putPosition + 1) % m_ringBufferSpareLocalIDs.length;
+                    m_count++;
+                }
+                ret = true;
+            } else {
+                ret = false;
+            }
+
+            m_overallCount++;
+
+            m_ringBufferLock.unlock();
+            return ret;
+        }
+
 
         /**
          * Refill the store. This calls a deep search for zombie entries in the CIDTable
