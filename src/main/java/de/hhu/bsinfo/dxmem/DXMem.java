@@ -114,6 +114,10 @@ public class DXMem {
         initOperations();
     }
 
+    public Context getM_context() {
+        return m_context;
+    }
+
     /**
      * Constructor
      * Create a new empty heap and initialize DXMem.

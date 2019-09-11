@@ -197,8 +197,8 @@ public class GetPutTest {
 
         DXMem memory = new DXMem(DXMemoryTestConstants.NODE_ID, p_heapSize);
 
-        TestVertixChunk[] chunks = new TestVertixChunk[p_count];
-
+        //TestVertixChunk[] chunks = new TestVertixChunk[p_count];
+        TestVertixChunk chunk;
         for (int i = 0; i < p_count; i++) {
             if(i % 10_000_000 == 0) {
                 LOGGER.info(memory.create().getCIDStoreInfo().toString());
@@ -207,11 +207,12 @@ public class GetPutTest {
             if(i % 1_000_000 == 0) {
                 LOGGER.info("still running");
             }
-            chunks[i] = new TestVertixChunk(i);
-            memory.create().testCreate(chunks[i]);
-            Assert.assertTrue(chunks[i].isStateOk());
-            Assert.assertTrue(chunks[i].isIDValid());
+            chunk = new TestVertixChunk(i);
+            memory.create().create(chunk);
+            Assert.assertTrue(chunk.isStateOk());
+            Assert.assertTrue(chunk.isIDValid());
         }
+        LOGGER.info(memory.create().getCIDStoreInfo().toString());
 
         /*
         memory.remove().remove(chunks[0].getID());

@@ -133,7 +133,43 @@ public final class Create {
         }
         m_context.getDefragmenter().releaseApplicationThreadLock();
 
-        SOP_CREATE.add(p_size);
+        //SOP_CREATE.add(p_size);
+
+        return cid;
+    }
+
+    public long testCreate(final int p_size, final long lid, final ChunkLockOperation p_lockOperation) {
+        assert assertLockOperationSupport(p_lockOperation);
+        assert p_size > 0;
+
+        CIDTableChunkEntry tableEntry = m_context.getCIDTableEntryPool().get();
+
+        m_context.getDefragmenter().acquireApplicationThreadLock();
+
+        //m_context.getLIDStore().insert(lid);
+        long cid = ChunkID.getChunkID(m_context.getNodeId(),lid);
+
+        if (!m_context.getCIDTable().insert(cid, tableEntry)) {
+            // revert malloc to avoid corrupted memory
+            m_context.getHeap().free(tableEntry);
+
+            m_context.getDefragmenter().releaseApplicationThreadLock();
+
+            throw new AllocationException("Allocation of block of memory for LID table failed. Out of memory.");
+        }
+
+        // This is actually
+        LockManager.LockStatus status = LockManager.executeAfterOp(m_context.getCIDTable(), tableEntry,
+                p_lockOperation, -1);
+
+        // this should never fail because the chunk was just created and the defragmentation thread lock is still
+        // acquired
+        if (status != LockManager.LockStatus.OK) {
+            throw new IllegalStateException("Executing lock operation after create op " + p_lockOperation +
+                    " for cid " + ChunkID.toHexString(cid) + " failed: " + status);
+        }
+
+        m_context.getDefragmenter().releaseApplicationThreadLock();
 
         return cid;
     }
