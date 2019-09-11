@@ -36,12 +36,10 @@ public class CIdMemoryTest {
             BufferedReader reader = new BufferedReader(new FileReader(file));
             String line;
             long vid;
-            TestVertixChunk v;
             long start = System.nanoTime();
             int i = 0;
             while ((line = reader.readLine()) != null) {
                 vid = Long.parseLong(line.split("\\s")[0]);
-                v = new TestVertixChunk(vid);
                 memory.create().testCreate(v.sizeofObject(), vid, ChunkLockOperation.NONE);
                 i++;
 
