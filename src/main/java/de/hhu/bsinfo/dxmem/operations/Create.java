@@ -147,6 +147,9 @@ public final class Create {
         m_context.getDefragmenter().acquireApplicationThreadLock();
 
         //m_context.getLIDStore().insert(lid);
+        //hier erstelle ChunkID mit vorgegebener LID
+        //im Fall vom vorverarbeitenden Datensatz sind die LIDs aufsteigend ab 0 ohne Lücken (so würde DxMem es auch normal machen)
+        //im Fall vom originalen Datensatz sind die LIDS aufsteigend, aber mit Lücken und nicht von 0
         long cid = ChunkID.getChunkID(m_context.getNodeId(),lid);
 
         if (!m_context.getCIDTable().insert(cid, tableEntry)) {
