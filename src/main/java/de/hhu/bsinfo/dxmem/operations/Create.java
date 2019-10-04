@@ -16,9 +16,6 @@
 
 package de.hhu.bsinfo.dxmem.operations;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import de.hhu.bsinfo.dxmem.AllocationException;
 import de.hhu.bsinfo.dxmem.DXMem;
 import de.hhu.bsinfo.dxmem.core.CIDTableChunkEntry;
@@ -31,6 +28,8 @@ import de.hhu.bsinfo.dxmem.data.ChunkLockOperation;
 import de.hhu.bsinfo.dxmem.data.ChunkState;
 import de.hhu.bsinfo.dxutils.stats.StatisticsManager;
 import de.hhu.bsinfo.dxutils.stats.ValuePool;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 /**
  * Create a new chunk by generating a CID and allocating memory for it
@@ -48,11 +47,14 @@ public final class Create {
 
     private final Context m_context;
 
+    public Context getM_context() {
+        return m_context;
+    }
+
     /**
      * Constructor
      *
-     * @param p_context
-     *         Context
+     * @param p_context Context
      */
     public Create(final Context p_context) {
         m_context = p_context;
@@ -61,9 +63,8 @@ public final class Create {
     /**
      * Create a new chunk
      *
-     * @param p_ds
-     *         AbstractChunk to create/allocate memory for. On success, the resulting CID will be assigned to the
-     *         AbstractChunk and the state is set to OK. If the operation failed, the state indicates the error.
+     * @param p_ds AbstractChunk to create/allocate memory for. On success, the resulting CID will be assigned to the
+     *             AbstractChunk and the state is set to OK. If the operation failed, the state indicates the error.
      */
     public void create(final AbstractChunk p_ds) {
         p_ds.setID(create(p_ds.sizeofObject()));
@@ -73,11 +74,9 @@ public final class Create {
     /**
      * Create a new chunk
      *
-     * @param p_ds
-     *         AbstractChunk to create/allocate memory for. On success, the resulting CID will be assigned to the
-     *         AbstractChunk and the state is set to OK. If the operation failed, the state indicates the error.
-     * @param p_lockOperation
-     *         Lock operation to execute right after the chunk is created
+     * @param p_ds            AbstractChunk to create/allocate memory for. On success, the resulting CID will be assigned to the
+     *                        AbstractChunk and the state is set to OK. If the operation failed, the state indicates the error.
+     * @param p_lockOperation Lock operation to execute right after the chunk is created
      */
     public void create(final AbstractChunk p_ds, final ChunkLockOperation p_lockOperation) {
         p_ds.setID(create(p_ds.sizeofObject(), p_lockOperation));
@@ -85,10 +84,23 @@ public final class Create {
     }
 
     /**
+     * Create a new chunk with a custom local id
+     *
+     * @param p_ds            AbstractChunk to create/allocate memory for. On success, the resulting CID will be assigned to the
+     *                        AbstractChunk and the state is set to OK. If the operation failed, the state indicates the error.
+     * @param p_lid           Custom local id
+     * @param p_lockOperation Lock operation to execute right after the chunk is created
+     */
+    public void create(final AbstractChunk p_ds, final long p_lid, final ChunkLockOperation p_lockOperation) {
+        p_ds.setID(create(p_ds.sizeofObject(), p_lid, p_lockOperation));
+        p_ds.setState(ChunkState.OK);
+    }
+
+
+    /**
      * Create a new chunk
      *
-     * @param p_size
-     *         Size of the chunk to create (payload size)
+     * @param p_size Size of the chunk to create (payload size)
      * @return On success, CID assigned to the allocated memory for the chunk, ChunkID.INVALID_ID on failure
      */
     public long create(final int p_size) {
@@ -98,10 +110,8 @@ public final class Create {
     /**
      * Create a new chunk
      *
-     * @param p_size
-     *         Size of the chunk to create (payload size)
-     * @param p_lockOperation
-     *         Lock operation to execute right after the chunk is created
+     * @param p_size          Size of the chunk to create (payload size)
+     * @param p_lockOperation Lock operation to execute right after the chunk is created
      * @return On success, CID assigned to the allocated memory for the chunk, ChunkID.INVALID_ID on failure
      */
     public long create(final int p_size, final ChunkLockOperation p_lockOperation) {
@@ -150,44 +160,33 @@ public final class Create {
     /**
      * Create one or multiple chunks of the same size
      *
-     * @param p_chunkIDs
-     *         Pre-allocated array for the CIDs returned
-     * @param p_offset
-     *         Offset in array to start putting the CIDs to
-     * @param p_count
-     *         Number of chunks to allocate
-     * @param p_size
-     *         Size of a single chunk
-     * @param p_consecutiveIDs
-     *         True to enforce consecutive CIDs for all chunks to allocate, false might assign non
-     *         consecutive CIDs if available.
+     * @param p_chunkIDs       Pre-allocated array for the CIDs returned
+     * @param p_offset         Offset in array to start putting the CIDs to
+     * @param p_count          Number of chunks to allocate
+     * @param p_size           Size of a single chunk
+     * @param p_consecutiveIDs True to enforce consecutive CIDs for all chunks to allocate, false might assign non
+     *                         consecutive CIDs if available.
      * @return Number of chunks successfully created
      */
     public int create(final long[] p_chunkIDs, final int p_offset, final int p_count, final int p_size,
-            final boolean p_consecutiveIDs) {
+                      final boolean p_consecutiveIDs) {
         return create(p_chunkIDs, p_offset, p_count, p_size, p_consecutiveIDs, ChunkLockOperation.NONE);
     }
 
     /**
      * Create one or multiple chunks of the same size
      *
-     * @param p_chunkIDs
-     *         Pre-allocated array for the CIDs returned
-     * @param p_offset
-     *         Offset in array to start putting the CIDs to
-     * @param p_count
-     *         Number of chunks to allocate
-     * @param p_size
-     *         Size of a single chunk
-     * @param p_consecutiveIDs
-     *         True to enforce consecutive CIDs for all chunks to allocate, false might assign non
-     *         consecutive CIDs if available.
-     * @param p_lockOperation
-     *         Lock operation to execute for every chunk right after the chunks are created
+     * @param p_chunkIDs       Pre-allocated array for the CIDs returned
+     * @param p_offset         Offset in array to start putting the CIDs to
+     * @param p_count          Number of chunks to allocate
+     * @param p_size           Size of a single chunk
+     * @param p_consecutiveIDs True to enforce consecutive CIDs for all chunks to allocate, false might assign non
+     *                         consecutive CIDs if available.
+     * @param p_lockOperation  Lock operation to execute for every chunk right after the chunks are created
      * @return Number of chunks successfully created
      */
     public int create(final long[] p_chunkIDs, final int p_offset, final int p_count, final int p_size,
-            final boolean p_consecutiveIDs, final ChunkLockOperation p_lockOperation) {
+                      final boolean p_consecutiveIDs, final ChunkLockOperation p_lockOperation) {
         assert assertLockOperationSupport(p_lockOperation);
         assert p_size > 0;
         assert p_count > 0;
@@ -263,42 +262,33 @@ public final class Create {
     /**
      * Create one or multiple chunks with different sizes
      *
-     * @param p_chunkIDs
-     *         Pre-allocated array for the CIDs returned
-     * @param p_offset
-     *         Offset in array to start putting the CIDs to
-     * @param p_consecutiveIDs
-     *         True to enforce consecutive CIDs for all chunks to allocate, false might assign non
-     *         consecutive CIDs if available.
-     * @param p_sizes
-     *         One or multiple (different) sizes. The amount of sizes declared here denotes the number of
-     *         chunks to create
+     * @param p_chunkIDs       Pre-allocated array for the CIDs returned
+     * @param p_offset         Offset in array to start putting the CIDs to
+     * @param p_consecutiveIDs True to enforce consecutive CIDs for all chunks to allocate, false might assign non
+     *                         consecutive CIDs if available.
+     * @param p_sizes          One or multiple (different) sizes. The amount of sizes declared here denotes the number of
+     *                         chunks to create
      * @return Number of chunks successfully created
      */
     public int create(final long[] p_chunkIDs, final int p_offset, final boolean p_consecutiveIDs,
-            final int... p_sizes) {
+                      final int... p_sizes) {
         return create(p_chunkIDs, p_offset, p_consecutiveIDs, ChunkLockOperation.NONE, p_sizes);
     }
 
     /**
      * Create one or multiple chunks with different sizes
      *
-     * @param p_chunkIDs
-     *         Pre-allocated array for the CIDs returned
-     * @param p_offset
-     *         Offset in array to start putting the CIDs to
-     * @param p_consecutiveIDs
-     *         True to enforce consecutive CIDs for all chunks to allocate, false might assign non
-     *         consecutive CIDs if available.
-     * @param p_sizes
-     *         One or multiple (different) sizes. The amount of sizes declared here denotes the number of
-     *         chunks to create
-     * @param p_lockOperation
-     *         Lock operation to execute for every chunk right after the chunks are created
+     * @param p_chunkIDs       Pre-allocated array for the CIDs returned
+     * @param p_offset         Offset in array to start putting the CIDs to
+     * @param p_consecutiveIDs True to enforce consecutive CIDs for all chunks to allocate, false might assign non
+     *                         consecutive CIDs if available.
+     * @param p_sizes          One or multiple (different) sizes. The amount of sizes declared here denotes the number of
+     *                         chunks to create
+     * @param p_lockOperation  Lock operation to execute for every chunk right after the chunks are created
      * @return Number of chunks successfully created
      */
     public int create(final long[] p_chunkIDs, final int p_offset, final boolean p_consecutiveIDs,
-            final ChunkLockOperation p_lockOperation, final int... p_sizes) {
+                      final ChunkLockOperation p_lockOperation, final int... p_sizes) {
         assert assertLockOperationSupport(p_lockOperation);
         assert p_chunkIDs != null;
         assert p_offset >= 0;
@@ -374,42 +364,33 @@ public final class Create {
     /**
      * Create one or multiple chunks using Chunk instances (with different sizes)
      *
-     * @param p_offset
-     *         Offset in array to start putting the CIDs to
-     * @param p_count
-     *         Number of chunks to create (might be less than objects provided)
-     * @param p_consecutiveIDs
-     *         True to enforce consecutive CIDs for all chunks to allocate, false might assign non
-     *         consecutive CIDs if available.
-     * @param p_chunks
-     *         Instances of chunk objects to allocate storage for. On success, the CID is assigned to the object
-     *         and the state is set to OK.
+     * @param p_offset         Offset in array to start putting the CIDs to
+     * @param p_count          Number of chunks to create (might be less than objects provided)
+     * @param p_consecutiveIDs True to enforce consecutive CIDs for all chunks to allocate, false might assign non
+     *                         consecutive CIDs if available.
+     * @param p_chunks         Instances of chunk objects to allocate storage for. On success, the CID is assigned to the object
+     *                         and the state is set to OK.
      * @return Number of chunks successfully created. If less than expected, check the chunk objects states for errors.
      */
     public int create(final int p_offset, final int p_count, final boolean p_consecutiveIDs,
-            final AbstractChunk... p_chunks) {
+                      final AbstractChunk... p_chunks) {
         return create(p_offset, p_count, p_consecutiveIDs, ChunkLockOperation.NONE, p_chunks);
     }
 
     /**
      * Create one or multiple chunks using Chunk instances (with different sizes)
      *
-     * @param p_offset
-     *         Offset in array to start putting the CIDs to
-     * @param p_count
-     *         Number of chunks to create (might be less than objects provided)
-     * @param p_consecutiveIDs
-     *         True to enforce consecutive CIDs for all chunks to allocate, false might assign non
-     *         consecutive CIDs if available.
-     * @param p_lockOperation
-     *         Lock operation to execute for every chunk right after the chunks are created
-     * @param p_chunks
-     *         Instances of chunk objects to allocate storage for. On success, the CID is assigned to the object
-     *         and the state is set to OK.
+     * @param p_offset         Offset in array to start putting the CIDs to
+     * @param p_count          Number of chunks to create (might be less than objects provided)
+     * @param p_consecutiveIDs True to enforce consecutive CIDs for all chunks to allocate, false might assign non
+     *                         consecutive CIDs if available.
+     * @param p_lockOperation  Lock operation to execute for every chunk right after the chunks are created
+     * @param p_chunks         Instances of chunk objects to allocate storage for. On success, the CID is assigned to the object
+     *                         and the state is set to OK.
      * @return Number of chunks successfully created. If less than expected, check the chunk objects states for errors.
      */
     public int create(final int p_offset, final int p_count, final boolean p_consecutiveIDs,
-            final ChunkLockOperation p_lockOperation, final AbstractChunk... p_chunks) {
+                      final ChunkLockOperation p_lockOperation, final AbstractChunk... p_chunks) {
         assert assertLockOperationSupport(p_lockOperation);
         assert p_chunks != null;
 
@@ -434,6 +415,51 @@ public final class Create {
 
         return successfullMallocs;
     }
+
+    public long create(final int p_size, final long p_lid, final ChunkLockOperation p_lockOperation) {
+        assert assertLockOperationSupport(p_lockOperation);
+        assert p_size > 0;
+
+        CIDTableChunkEntry tableEntry = m_context.getCIDTableEntryPool().get();
+
+        m_context.getDefragmenter().acquireApplicationThreadLock();
+
+        if (!m_context.getHeap().malloc(p_size, tableEntry)) {
+            m_context.getDefragmenter().releaseApplicationThreadLock();
+
+            throw new AllocationException(p_size);
+        }
+        m_context.getLIDStore().put(p_lid);
+        //check if chunkID is reserved
+        long cid = ChunkID.getChunkID(m_context.getNodeId(), p_lid);
+
+        if (!m_context.getCIDTable().insert(cid, tableEntry)) {
+            // revert malloc to avoid corrupted memory
+            m_context.getHeap().free(tableEntry);
+
+            m_context.getDefragmenter().releaseApplicationThreadLock();
+
+            throw new AllocationException("Allocation of block of memory for LID table failed. Out of memory.");
+        }
+
+        // This is actually
+        LockManager.LockStatus status = LockManager.executeAfterOp(m_context.getCIDTable(), tableEntry,
+                p_lockOperation, -1);
+
+        // this should never fail because the chunk was just created and the defragmentation thread lock is still
+        // acquired
+        if (status != LockManager.LockStatus.OK) {
+            throw new IllegalStateException("Executing lock operation after create op " + p_lockOperation +
+                    " for cid " + ChunkID.toHexString(cid) + " failed: " + status);
+        }
+
+        m_context.getDefragmenter().releaseApplicationThreadLock();
+
+        SOP_CREATE.add(p_size);
+
+        return cid;
+    }
+
 
     /**
      * Assert the lock operation used

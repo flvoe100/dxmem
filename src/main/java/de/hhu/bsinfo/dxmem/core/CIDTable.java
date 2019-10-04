@@ -660,8 +660,8 @@ public final class CIDTable implements Importable, Exportable {
         m_status.m_totalPayloadMemoryTables += NID_TABLE_SIZE + alignment;
         m_status.m_totalTableCount++;
 
-        LOGGER.trace("Created NID table size %d at %X (alignment offset +%d)", LID_TABLE_SIZE + alignment,
-                p_entry.getAddress(), alignment);
+      //  LOGGER.trace("Created NID table size %d at %X (alignment offset +%d)", LID_TABLE_SIZE + alignment,
+        //        p_entry.getAddress(), alignment);
     }
 
     /**
