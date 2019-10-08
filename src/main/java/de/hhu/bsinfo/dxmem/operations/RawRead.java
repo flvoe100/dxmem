@@ -23,6 +23,7 @@ import de.hhu.bsinfo.dxmem.core.Context;
  * the address, first)
  *
  * @author Stefan Nothaas, stefan.nothaas@hhu.de, 21.06.2018
+ * @author Ruslan Curbanov, ruslan.curbanov@uni-duesseldorf.de, 14.03.2019
  */
 public class RawRead {
     private final Context m_context;
@@ -35,6 +36,10 @@ public class RawRead {
      */
     public RawRead(final Context p_context) {
         m_context = p_context;
+    }
+
+    public boolean readBoolean(final long p_address, final int p_addressOffset) {
+        return m_context.getHeap().readBoolean(p_address, p_addressOffset);
     }
 
     public byte readByte(final long p_address, final int p_addressOffset) {
@@ -57,6 +62,18 @@ public class RawRead {
         return m_context.getHeap().readLong(p_address, p_addressOffset);
     }
 
+    public double readDouble(final long p_address, final int p_addressOffset) {
+        return m_context.getHeap().readDouble(p_address, p_addressOffset);
+    }
+
+    public float readFloat(final long p_address, final int p_addressOffset) {
+        return m_context.getHeap().readFloat(p_address, p_addressOffset);
+    }
+
+    public void read(final long p_address, final int p_addressOffset, final boolean[] p_array) {
+        read(p_address, p_addressOffset, p_array, 0, p_array.length);
+    }
+
     public void read(final long p_address, final int p_addressOffset, final byte[] p_array) {
         read(p_address, p_addressOffset, p_array, 0, p_array.length);
     }
@@ -75,6 +92,19 @@ public class RawRead {
 
     public void read(final long p_address, final int p_addressOffset, final long[] p_array) {
         read(p_address, p_addressOffset, p_array, 0, p_array.length);
+    }
+
+    public void read(final long p_address, final int p_addressOffset, final double[] p_array) {
+        read(p_address, p_addressOffset, p_array, 0, p_array.length);
+    }
+
+    public void read(final long p_address, final int p_addressOffset, final float[] p_array) {
+        read(p_address, p_addressOffset, p_array, 0, p_array.length);
+    }
+
+    public void read(final long p_address, final int p_addressOffset, final boolean[] p_array, final int p_offset,
+            final int p_length) {
+        m_context.getHeap().readBooleans(p_address, p_addressOffset, p_array, p_offset, p_length);
     }
 
     public void read(final long p_address, final int p_addressOffset, final byte[] p_array, final int p_offset,
@@ -100,5 +130,15 @@ public class RawRead {
     public void read(final long p_address, final int p_addressOffset, final long[] p_array, final int p_offset,
             final int p_length) {
         m_context.getHeap().readLongs(p_address, p_addressOffset, p_array, p_offset, p_length);
+    }
+
+    public void read(final long p_address, final int p_addressOffset, final double[] p_array, final int p_offset,
+            final int p_length) {
+        m_context.getHeap().readDoubles(p_address, p_addressOffset, p_array, p_offset, p_length);
+    }
+
+    public void read(final long p_address, final int p_addressOffset, final float[] p_array, final int p_offset,
+            final int p_length) {
+        m_context.getHeap().readFloats(p_address, p_addressOffset, p_array, p_offset, p_length);
     }
 }
