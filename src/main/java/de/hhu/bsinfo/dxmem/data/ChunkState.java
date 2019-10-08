@@ -65,4 +65,6 @@ public enum ChunkState {
      * Typically, one simply issues the timed out operation again (maybe add a short delay).
      */
     REMOTE_REQUEST_TIMEOUT,
+
+    CHUNK_ID_SELF_CONSTRUCTED
 }
