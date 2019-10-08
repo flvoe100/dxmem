@@ -151,6 +151,14 @@ public final class LIDStore implements Importable, Exportable {
         }
     }
 
+    public boolean put(final long... p_lids) {
+        assert p_lids.length > 0;
+        for (long p_lid : p_lids) {
+            this.put(p_lid);
+        }
+        return false;
+    }
+
     public boolean put(final long p_lid) {
         assert p_lid <= ChunkID.MAX_LOCALID;
         if (p_lid < m_localIDCounter.get()) {

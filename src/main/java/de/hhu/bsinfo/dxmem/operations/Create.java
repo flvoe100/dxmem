@@ -361,6 +361,79 @@ public final class Create {
         return successfulMallocs;
     }
 
+    public int create(final long[] p_chunkIDs, final int p_offset, final long[] p_lids,
+                      final ChunkLockOperation p_lockOperation, final int... p_sizes) {
+        assert assertLockOperationSupport(p_lockOperation);
+        assert p_chunkIDs != null;
+        assert p_offset >= 0;
+        assert p_sizes != null;
+        assert p_chunkIDs.length >= p_sizes.length;
+        assert p_lids.length > 0;
+        assert p_lids.length == p_sizes.length;
+
+        m_context.getDefragmenter().acquireApplicationThreadLock();
+
+        m_context.getLIDStore().put(p_lids);
+
+
+        // create CIDs from LIDs
+        for (int i = 0; i < p_sizes.length; i++) {
+            p_chunkIDs[p_offset + i] = ChunkID.getChunkID(m_context.getNodeId(), p_lids[i]);
+        }
+
+        // can't use thread local pool here
+        CIDTableChunkEntry[] entries = new CIDTableChunkEntry[p_sizes.length];
+
+        for (int i = 0; i < entries.length; i++) {
+            entries[i] = new CIDTableChunkEntry();
+        }
+
+        int successfulMallocs = m_context.getHeap().malloc(entries, p_sizes);
+
+        // add all entries to table
+        for (int i = 0; i < successfulMallocs; i++) {
+            if (!m_context.getCIDTable().insert(p_chunkIDs[p_offset + i], entries[i])) {
+                // revert mallocs for remaining chunks to avoid corrupted memory
+                for (int j = i; j < successfulMallocs; j++) {
+                    m_context.getHeap().free(entries[j]);
+                }
+
+                successfulMallocs = i;
+            }
+
+            LockManager.LockStatus status = LockManager.executeAfterOp(m_context.getCIDTable(), entries[i],
+                    p_lockOperation, -1);
+
+            // this should never fail because the chunk was just created and the defragmentation thread lock is still
+            // acquired
+            if (status != LockManager.LockStatus.OK) {
+                throw new IllegalStateException("Executing lock operation after create op " + p_lockOperation +
+                        " for cid " + ChunkID.toHexString(p_chunkIDs[p_offset + i]) + " failed: " + status);
+            }
+        }
+
+        // put back or flag as zombies: entries of non successful allocs (rare case)
+        if (successfulMallocs != p_sizes.length) {
+            // put back LIDs that could not be used (after they were added to the table because they might be marked
+            // as zombies if LID store is full)
+            for (int i = successfulMallocs; i < p_sizes.length; i++) {
+                if (!m_context.getLIDStore().put(ChunkID.getLocalID(p_chunkIDs[p_offset + i]))) {
+                    // lid store full, flag as zombie
+                    if (entries[i].isValid()) {
+                        m_context.getCIDTable().entryFlagZombie(entries[i]);
+                    } else {
+                        LOGGER.error("Putting back LIDs failed, invalid entry due to malloc failure. LID %X lost",
+                                ChunkID.getLocalID(p_chunkIDs[p_offset + i]));
+                    }
+                }
+            }
+        }
+
+        m_context.getDefragmenter().releaseApplicationThreadLock();
+
+        return successfulMallocs;
+    }
+
     /**
      * Create one or multiple chunks using Chunk instances (with different sizes)
      *
@@ -375,6 +448,10 @@ public final class Create {
     public int create(final int p_offset, final int p_count, final boolean p_consecutiveIDs,
                       final AbstractChunk... p_chunks) {
         return create(p_offset, p_count, p_consecutiveIDs, ChunkLockOperation.NONE, p_chunks);
+    }
+
+    public int create(final int p_offset, final int p_count, final long[] p_lids, final AbstractChunk... p_chunks) {
+        return create(p_offset, p_count, ChunkLockOperation.NONE, p_lids, p_chunks);
     }
 
     /**
@@ -402,6 +479,33 @@ public final class Create {
         }
 
         int successfullMallocs = create(cids, 0, p_consecutiveIDs, p_lockOperation, sizes);
+
+        for (int i = 0; i < successfullMallocs; i++) {
+            p_chunks[p_offset + i].setID(cids[i]);
+            p_chunks[p_offset + i].setState(ChunkState.OK);
+        }
+
+        for (int i = successfullMallocs; i < p_count; i++) {
+            p_chunks[p_offset + i].setID(ChunkID.INVALID_ID);
+            p_chunks[p_offset + i].setState(ChunkState.DOES_NOT_EXIST);
+        }
+
+        return successfullMallocs;
+    }
+
+    public int create(final int p_offset, final int p_count,
+                      final ChunkLockOperation p_lockOperation, final long[] p_lids, final AbstractChunk... p_chunks) {
+        assert assertLockOperationSupport(p_lockOperation);
+        assert p_chunks != null;
+
+        long[] cids = new long[p_count];
+        int[] sizes = new int[p_count];
+
+        for (int i = 0; i < sizes.length; i++) {
+            sizes[i] = p_chunks[p_offset + i].sizeofObject();
+        }
+        int successfullMallocs = create(cids, 0, p_lids, p_lockOperation, sizes);
+
 
         for (int i = 0; i < successfullMallocs; i++) {
             p_chunks[p_offset + i].setID(cids[i]);
