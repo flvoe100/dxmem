@@ -1,6 +1,7 @@
 package de.hhu.bsinfo.dxmem.operations;
 
 import de.hhu.bsinfo.dxmem.*;
+import de.hhu.bsinfo.dxmem.data.ChunkID;
 import de.hhu.bsinfo.dxmem.data.ChunkLockOperation;
 import de.hhu.bsinfo.dxutils.unit.StorageUnit;
 import org.apache.logging.log4j.Level;
@@ -21,17 +22,24 @@ public class LidCreateTest {
         Configurator.setRootLevel(Level.TRACE);
 
         DXMem memory = new DXMem(DXMemoryTestConstants.NODE_ID, DXMemoryTestConstants.HEAP_SIZE_SMALL);
-        TestChunk[] testChunk = new TestChunk[5];
+        TestChunk[] testChunk = new TestChunk[8];
         TestChunk dummy = new TestChunk(true);
 
-        memory.create().create(dummy.sizeofObject(), 1, ChunkLockOperation.NONE);
-        long id =    memory.create().create(dummy.sizeofObject(), 3, ChunkLockOperation.NONE);
+        // memory.create().create(dummy.sizeofObject(), 0, ChunkLockOperation.NONE);
+        long id = memory.create().create(dummy.sizeofObject(), 0, ChunkLockOperation.NONE);
         memory.create().create(dummy.sizeofObject(), 7, ChunkLockOperation.NONE);
-        memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
-
-        memory.remove().remove(id);
+        memory.create().create(dummy.sizeofObject(), 11, ChunkLockOperation.NONE);
 
         memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
+        //LOGGER.debug("---------------------------------");
+        for (int i = 0; i < testChunk.length; i++) {
+            testChunk[i] = new TestChunk(true);
+        }
+       memory.create().create(0, 8, false, ChunkLockOperation.NONE, testChunk);
+        for (int i = 0; i < testChunk.length; i++) {
+            System.out.println("testChunk = " + ChunkID.getLocalID(testChunk[i].getID()));
+        }
+
 
              /*
         memory.create().create(dummy.sizeofObject(), 10, ChunkLockOperation.NONE);
@@ -94,7 +102,7 @@ public class LidCreateTest {
             memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
             TestVertixChunk chunk102 = new TestVertixChunk();
             chunk102.setID(102);
-            boolean a =memory.get().get(chunk102);
+            boolean a = memory.get().get(chunk102);
             System.out.println("a = " + a);
             System.out.println("chunk102.getExternalId() = " + chunk102.getExternalId());
 

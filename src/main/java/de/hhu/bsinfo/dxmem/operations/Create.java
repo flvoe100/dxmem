@@ -170,7 +170,12 @@ public final class Create {
      */
     public int create(final long[] p_chunkIDs, final int p_offset, final int p_count, final int p_size,
                       final boolean p_consecutiveIDs) {
-        return create(p_chunkIDs, p_offset, p_count, p_size, p_consecutiveIDs, ChunkLockOperation.NONE);
+        return create(p_chunkIDs, p_offset, p_count, p_size, p_consecutiveIDs, false, ChunkLockOperation.NONE);
+    }
+
+    public int create(final long[] p_chunkIDs, final int p_offset, final int p_count, final int p_size,
+                            final boolean p_consecutiveIDs, final boolean p_customLID) {
+        return create(p_chunkIDs, p_offset, p_count, p_size, p_consecutiveIDs, p_customLID, ChunkLockOperation.NONE);
     }
 
     /**
@@ -186,7 +191,7 @@ public final class Create {
      * @return Number of chunks successfully created
      */
     public int create(final long[] p_chunkIDs, final int p_offset, final int p_count, final int p_size,
-                      final boolean p_consecutiveIDs, final ChunkLockOperation p_lockOperation) {
+                      final boolean p_consecutiveIDs, final boolean p_customLIDs, final ChunkLockOperation p_lockOperation) {
         assert assertLockOperationSupport(p_lockOperation);
         assert p_size > 0;
         assert p_count > 0;
@@ -198,7 +203,11 @@ public final class Create {
         if (p_consecutiveIDs) {
             m_context.getLIDStore().getConsecutive(p_chunkIDs, p_offset, p_count);
         } else {
-            m_context.getLIDStore().get(p_chunkIDs, p_offset, p_count);
+            if (p_customLIDs) {
+                m_context.getLIDStore().put(p_chunkIDs, p_offset, p_count);
+            } else {
+                m_context.getLIDStore().get(p_chunkIDs, p_offset, p_count);
+            }
         }
 
         // create CIDs from LIDs
@@ -316,7 +325,6 @@ public final class Create {
         }
 
         int successfulMallocs = m_context.getHeap().malloc(entries, p_sizes);
-
         // add all entries to table
         for (int i = 0; i < successfulMallocs; i++) {
             if (!m_context.getCIDTable().insert(p_chunkIDs[p_offset + i], entries[i])) {
