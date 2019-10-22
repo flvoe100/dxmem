@@ -126,7 +126,6 @@ public final class LIDStore implements Importable, Exportable {
 
         do {
             reusedLids = m_spareLIDStore.get(p_lids, offset, p_count - (p_offset - offset));
-            System.out.println("reusedLids = " + reusedLids);
             offset += reusedLids;
         } while (reusedLids > 0 && offset - p_offset < p_count);
 
@@ -415,8 +414,6 @@ public final class LIDStore implements Importable, Exportable {
             assert p_count > 0;
 
             int counter = 0;
-            System.out.println("m_freeLIDs = " + m_freeLIDs);
-            System.out.println("p_count = " + p_count);
             // lids in store or zombie entries in table
             if (m_overallCount > 0) {
                 m_ringBufferLock.lock();
@@ -635,6 +632,7 @@ public final class LIDStore implements Importable, Exportable {
             for (int i = 1; i < m_count + 1; i++) {
                 LOGGER.debug("Position: %d, Value: %d, isIntervall: %d, id: %d", (m_putPosition - i) % m_ringBufferSpareLocalIDs.length, m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length], m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length] >> 48, m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length] & LOCALID_BITMASK);
             }
+            LOGGER.debug("M_freeLIDs: %d", m_freeLIDs);
         }
 
         /**
@@ -650,6 +648,7 @@ public final class LIDStore implements Importable, Exportable {
                 m_ringBufferSpareLocalIDs[m_putPosition] = getSparseLocalID(false, p_lid);
                 m_count++;
                 m_overallCount++;
+                m_freeLIDs++;
                 m_putPosition = (m_putPosition + 1) % m_ringBufferSpareLocalIDs.length;
 
                 ret = true;

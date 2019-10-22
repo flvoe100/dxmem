@@ -35,7 +35,7 @@ public class LidCreateTest {
         for (int i = 0; i < testChunk.length; i++) {
             testChunk[i] = new TestChunk(true);
         }
-       memory.create().create(0, 8, false, ChunkLockOperation.NONE, testChunk);
+        memory.create().create(0, 8, false, ChunkLockOperation.NONE, testChunk);
         for (int i = 0; i < testChunk.length; i++) {
             System.out.println("testChunk = " + ChunkID.getLocalID(testChunk[i].getID()));
         }
@@ -77,34 +77,51 @@ public class LidCreateTest {
         }
         DXMem memory = new DXMem(DXMemoryTestConstants.NODE_ID, DXMemoryTestConstants.HEAP_SIZE_LARGE);
 
-        String file = "/home/vlz/bsinfo/datasets/datagen-8_7-zf.v";
+        String vfile = "/home/vlz/bsinfo/datasets/dota-league/dota-league_1.v";
+        String efile = "/home/vlz/bsinfo/datasets/dota-league/dota-league_1.e";
 
-        int endLine = 1000;
         try {
-            BufferedReader reader = new BufferedReader(new FileReader(file));
+            BufferedReader reader = new BufferedReader(new FileReader(vfile));
             String line;
             long vid;
             TestVertixChunk v;
             int i = 0;
+            System.out.println("Reading vertices");
             while ((line = reader.readLine()) != null) {
-                if (i == endLine) {
-                    break;
-                }
+
                 vid = Long.parseLong(line.split("\\s")[0]);
                 v = new TestVertixChunk(vid);
-                memory.create().create(v.sizeofObject(), vid, ChunkLockOperation.NONE);
+                memory.create().create(v, vid, ChunkLockOperation.NONE);
+                memory.put().put(v);
                 i++;
-                if (i % 10_000_000 == 0) {
+                if (i % 1_000 == 0) {
                     System.out.println("i = " + i);
                 }
 
             }
+            reader.close();
             memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
-            TestVertixChunk chunk102 = new TestVertixChunk();
-            chunk102.setID(102);
-            boolean a = memory.get().get(chunk102);
-            System.out.println("a = " + a);
-            System.out.println("chunk102.getExternalId() = " + chunk102.getExternalId());
+            reader = new BufferedReader(new FileReader(efile));
+            TestEdgeChunk e;
+            i = 0;
+            long from = 0;
+            long to = 0;
+            System.out.println("Reading edges");
+
+            while ((line = reader.readLine()) != null) {
+
+                String[] split = line.split("\\s");
+                from = Long.parseLong(split[0]);
+                to = Long.parseLong(split[1]);
+                e = new TestEdgeChunk(from, to);
+                memory.create().create(e);
+                memory.put().put(e);
+                i++;
+                if (i % 100_000 == 0) {
+                    System.out.println("i = " + i);
+                }
+
+            }
 
         } catch (IOException e) {
             e.printStackTrace();
