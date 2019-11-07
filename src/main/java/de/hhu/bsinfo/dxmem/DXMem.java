@@ -89,6 +89,11 @@ public class DXMem {
         this(p_memdumpFile, false);
     }
 
+
+    public Context getM_context() {
+        return m_context;
+    }
+
     /**
      * Constructor
      * Load a memory dump from a file and initialize DXMem with it.

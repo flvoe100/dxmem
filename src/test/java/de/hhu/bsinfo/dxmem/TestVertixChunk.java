@@ -4,7 +4,7 @@ import de.hhu.bsinfo.dxmem.data.AbstractChunk;
 import de.hhu.bsinfo.dxutils.serialization.Exporter;
 import de.hhu.bsinfo.dxutils.serialization.Importer;
 
-public class TestVertixChunk extends AbstractChunk {
+public class TestVertixChunk extends TestVertix {
     private long externalId;
 
     public TestVertixChunk() {

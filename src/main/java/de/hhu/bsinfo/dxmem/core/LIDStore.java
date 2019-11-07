@@ -21,6 +21,9 @@ import de.hhu.bsinfo.dxutils.serialization.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.io.BufferedWriter;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -32,7 +35,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * @author Stefan Nothaas, stefan.nothaas@hhu.de, 31.08.2018
  */
 public final class LIDStore implements Importable, Exportable {
-    private static final int STORE_CAPACITY = 100_00_000;
+    private static final int STORE_CAPACITY = 10_000_000;
     private static final long LOCALID_BITMASK = 0x0000FFFFFFFFFFFFL;
     private static final Logger LOGGER = LogManager.getFormatterLogger(LIDStore.class.getSimpleName());
 
@@ -119,7 +122,6 @@ public final class LIDStore implements Importable, Exportable {
     public void get(final long[] p_lids, final int p_offset, final int p_count) {
         assert p_lids != null;
         assert p_count > 0;
-
         // try to re-use as many already used LIDs as possible
         int reusedLids;
         int offset = p_offset;
@@ -128,6 +130,7 @@ public final class LIDStore implements Importable, Exportable {
             reusedLids = m_spareLIDStore.get(p_lids, offset, p_count - (p_offset - offset));
             offset += reusedLids;
         } while (reusedLids > 0 && offset - p_offset < p_count);
+
 
         // fill up with new LIDs if necessary
         if (offset - p_offset < p_count) {
@@ -161,15 +164,21 @@ public final class LIDStore implements Importable, Exportable {
 
     public boolean put(final long[] p_lids, final int p_offset, final int p_count) {
         assert p_lids.length > 0;
+        boolean ret = true;
         for (int i = 0; i < p_count; i++) {
-            this.put(p_lids[p_offset + i]);
+
+            if (!this.put(p_lids[p_offset + i])) {
+                ret = false;
+            }
+            ;
         }
-        return false;
+        return ret;
     }
 
     public boolean put(final long p_lid) {
         assert p_lid <= ChunkID.MAX_LOCALID;
         long p_currentLocalIDCounter = m_localIDCounter.get();
+
         if (p_lid < p_currentLocalIDCounter) {
             //FIXME: we do not need the information if it is a remove. Just change getLIDPosition in such way, that its gives the position where it should inserted.
             // Then insert it there. Two possibilities: 1. Extend an interval 2. Insert a single value and move all elements one field
@@ -204,6 +213,7 @@ public final class LIDStore implements Importable, Exportable {
             }
 
             m_spareLIDStore.putInterval(m_localIDCounter.get(), p_lid - 1);
+
             m_localIDCounter.set(p_lid + 1);
             return true;
         } else {
@@ -412,13 +422,11 @@ public final class LIDStore implements Importable, Exportable {
             assert p_lids != null;
             assert p_offset >= 0;
             assert p_count > 0;
-
             int counter = 0;
             // lids in store or zombie entries in table
+
             if (m_overallCount > 0) {
                 m_ringBufferLock.lock();
-
-
                 int restCount = p_count;
                 do {
                     if (m_count == 0 && m_overallCount > 0) {
@@ -431,8 +439,9 @@ public final class LIDStore implements Importable, Exportable {
                         long startIntervalId = currSparseEntry & LOCALID_BITMASK;
                         long endIntervalId = m_ringBufferSpareLocalIDs[(m_getPosition + 1) % m_ringBufferSpareLocalIDs.length] & LOCALID_BITMASK;
                         long intervalSize = endIntervalId - startIntervalId + 1;
+
                         if (intervalSize > restCount) {
-                            //just shrink
+                  //just shrink
                             for (int i = 0; i < restCount; i++) {
 
                                 p_lids[p_offset + i + counter] = startIntervalId + i;
@@ -452,10 +461,12 @@ public final class LIDStore implements Importable, Exportable {
                                 m_ringBufferSpareLocalIDs[m_getPosition] = getSparseLocalID(true, startIntervalId + restCount);
                             }
                             counter = p_count;
+                            m_freeLIDs -= restCount;
                             restCount = 0;
-                            m_freeLIDs -= p_count;
+
                         } else if (intervalSize <= restCount) {
                             //get whole interval and move
+
                             for (int i = 0; i < intervalSize; i++) {
                                 p_lids[p_offset + i + counter] = startIntervalId + i;
                             }
@@ -464,6 +475,7 @@ public final class LIDStore implements Importable, Exportable {
                             m_count -= 2;
                             m_overallCount -= 2;
                             m_freeLIDs -= intervalSize;
+
                             m_getPosition = (m_getPosition + 2) % m_ringBufferSpareLocalIDs.length;
                         }
 
@@ -477,11 +489,11 @@ public final class LIDStore implements Importable, Exportable {
                         m_freeLIDs--;
                         m_getPosition = (m_getPosition + 1) % m_ringBufferSpareLocalIDs.length;
                     }
-                    printRingBufferSpareLocalIDs();
 
                 } while (counter != p_count && restCount <= m_freeLIDs && (m_overallCount > 0 || m_count > 0));
                 m_ringBufferLock.unlock();
             }
+
             return counter;
         }
 
@@ -518,14 +530,16 @@ public final class LIDStore implements Importable, Exportable {
             if (p_nextLid + 1 == p_lid) {
                 m_ringBufferSpareLocalIDs[(p_pos + 1) % m_ringBufferSpareLocalIDs.length] = getSparseLocalID(true, p_lid);
             }
+
+            m_ringBufferLock.unlock();
             return true;
 
         }
 
 
         public boolean putInterval(final long p_startLid, final long p_endLid) {
-            //startLID + 1 === endlid !
             boolean ret;
+            // System.out.println("m_putPosition = " + m_putPosition);
             m_ringBufferLock.lock();
             if (m_count + 2 < m_ringBufferSpareLocalIDs.length) {
 
@@ -541,7 +555,6 @@ public final class LIDStore implements Importable, Exportable {
             } else {
                 ret = false;
             }
-
             m_overallCount += 2;
             m_ringBufferLock.unlock();
             return ret;
@@ -577,7 +590,7 @@ public final class LIDStore implements Importable, Exportable {
 
                 }
             }
-
+            m_ringBufferLock.unlock();
 
             return ret;
         }
@@ -635,6 +648,32 @@ public final class LIDStore implements Importable, Exportable {
             LOGGER.debug("M_freeLIDs: %d", m_freeLIDs);
         }
 
+        public void writeRingBufferSpareLocalIDs() {
+            LOGGER.trace("Logging Ring Buffer");
+            try {
+                BufferedWriter br = new BufferedWriter(new FileWriter("/home/vlz/ringBufferPrint4.txt"));
+                for (int i = 1; i < m_count + 1; i++) {
+                    br.write(String.format("Position: %d, Value: %d, isIntervall: %d, id: %d", (m_putPosition - i) % m_ringBufferSpareLocalIDs.length, m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length], m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length] >> 48, m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length] & LOCALID_BITMASK));
+                    br.newLine();
+                    br.flush();
+                }
+                br.write(String.format("M_freeLIDs: %d", m_freeLIDs));
+                br.newLine();
+                br.write(String.format("Put_Pos: %d", m_putPosition));
+                br.newLine();
+                br.write(String.format("Get_Pos: %d", m_getPosition));
+                br.newLine();
+                br.write(String.format("Overallcount: %d", m_overallCount));
+                br.newLine();
+                br.write(String.format("count: %d", m_count));
+                br.flush();
+                br.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+        }
+
         /**
          * Put a LID to the store
          *
@@ -655,7 +694,7 @@ public final class LIDStore implements Importable, Exportable {
             } else {
                 ret = false;
             }
-
+            m_ringBufferLock.unlock();
             return ret;
         }
 

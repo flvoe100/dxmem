@@ -99,7 +99,6 @@ public class Put {
         m_context.getDefragmenter().acquireApplicationThreadLock();
 
         m_context.getCIDTable().translate(p_chunk.getID(), tableEntry);
-
         if (!tableEntry.isValid()) {
             m_context.getDefragmenter().releaseApplicationThreadLock();
 
@@ -136,6 +135,7 @@ public class Put {
         // -> memory dump on error
 
         imExporter.exportObject(p_chunk);
+
 
         if (!m_context.isChunkLockDisabled()) {
             LockManager.executeAfterOp(m_context.getCIDTable(), tableEntry, p_lockOperation, p_lockTimeoutMs);

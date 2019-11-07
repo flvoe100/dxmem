@@ -197,14 +197,15 @@ public final class Create {
         assert p_count > 0;
         assert p_offset >= 0;
         assert p_chunkIDs.length >= p_count;
-
         m_context.getDefragmenter().acquireApplicationThreadLock();
 
         if (p_consecutiveIDs) {
             m_context.getLIDStore().getConsecutive(p_chunkIDs, p_offset, p_count);
         } else {
             if (p_customLIDs) {
-                m_context.getLIDStore().put(p_chunkIDs, p_offset, p_count);
+                if(!m_context.getLIDStore().put(p_chunkIDs, p_offset, p_count)) {
+                    LOGGER.error("Error in putting a lid in sparseStore");
+                };
             } else {
                 m_context.getLIDStore().get(p_chunkIDs, p_offset, p_count);
             }
