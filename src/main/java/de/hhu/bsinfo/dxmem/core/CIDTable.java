@@ -433,14 +433,14 @@ public final class CIDTable implements Importable, Exportable {
      * @param p_maxCount   Max number of elements to search
      * @return Number of zombies found
      */
-    int getAndEliminateZombies(final short p_nodeId, final long[] p_ringBuffer, final int p_offset,
+    int getAndEliminateZombies(final short p_nodeId, final long[] p_ringBuffer, final int p_offset, final int p_min_offset,
                                final int p_maxCount) {
         int count = 0;
         long entry = readTableEntry(m_tableDirectory.getAddress(), p_nodeId & 0xFFFF);
 
         if (entry != CIDTableTableEntry.RAW_VALUE_FREE) {
             count += getAndEliminateZombiesRecursiveLIDTable(CIDTableTableEntry.getAddressOfRawTableEntry(entry),
-                    LID_TABLE_LEVELS - 1, 0, 0, p_ringBuffer, p_offset, p_maxCount);
+                    LID_TABLE_LEVELS - 1, 0, 0, p_ringBuffer, p_offset, p_min_offset, p_maxCount);
         }
 
         return count;
@@ -514,7 +514,7 @@ public final class CIDTable implements Importable, Exportable {
      * @return Number of zombies found and removed
      */
     private int getAndEliminateZombiesRecursiveLIDTable(final long p_addressTable, final int p_level, final long p_cid,
-                                                        final int p_currentCount, final long[] p_ringBuffer, final int p_offset, final int p_maxCount) {
+                                                        final int p_currentCount, final long[] p_ringBuffer, final int p_offset, final int p_min_offset, final int p_maxCount) {
         int count = 0;
 
         for (int i = 0; i < ENTRIES_PER_LID_LEVEL; i++) {
@@ -528,14 +528,14 @@ public final class CIDTable implements Importable, Exportable {
                 if (entry != CIDTableTableEntry.RAW_VALUE_FREE) {
                     count += getAndEliminateZombiesRecursiveLIDTable(
                             CIDTableTableEntry.getAddressOfRawTableEntry(entry), p_level - 1,
-                            p_cid | i << p_level * BITS_PER_LID_LEVEL, p_currentCount + count, p_ringBuffer, p_offset,
+                            p_cid | i << p_level * BITS_PER_LID_LEVEL, p_currentCount + count, p_ringBuffer, p_offset, p_min_offset,
                             p_maxCount);
                 }
             } else {
                 long cid = p_cid | i << p_level * BITS_PER_LID_LEVEL;
 
                 if (entry == CIDTableZombieEntry.RAW_VALUE) {
-                    p_ringBuffer[(p_offset + p_currentCount + count) % p_maxCount] = cid;
+                    p_ringBuffer[(p_offset + p_currentCount + count) % p_maxCount] = ChunkID.getLocalID(cid);
 
                     // delete zombie entry
                     writeTableEntry(p_addressTable, i, CIDTableTableEntry.RAW_VALUE_FREE);

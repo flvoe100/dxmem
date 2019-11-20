@@ -160,6 +160,35 @@ public class DXMem {
     }
 
     /**
+     * Constructor
+     * Create a new empty heap and initialize DXMem.
+     *
+     * @param p_nodeId
+     *         Node id of current instance
+     * @param p_heapSize
+     *         Size of heap to create (in bytes)
+     * @param  p_spareLIDStoreSize
+     *         Size of the spare local id store (ring buffer)
+     * @param p_disableChunkLock
+     *         Disable the chunk lock mechanism which increases performance but blocks the remove
+     *         and resize operations. All lock operation arguments provided on operation calls are
+     *         ignored. DXMem cannot guarantee application data consistency on parallel writes to
+     *         the same chunk. Useful for read only applications or if the application handles
+     *         synchronization when writing to chunks.
+     */
+    public DXMem(final short p_nodeId, final long p_heapSize, final int p_spareLIDStoreSize, final boolean p_disableChunkLock) {
+        checkSufficientMemory(new StorageUnit(p_heapSize, StorageUnit.BYTE));
+
+        if (p_disableChunkLock) {
+            LOGGER.warn("Chunk locks are disabled. Remove and resize operations cannot be used and throw errors");
+        }
+
+        m_context = new Context(p_nodeId, p_heapSize, p_spareLIDStoreSize, p_disableChunkLock);
+
+        initOperations();
+    }
+
+    /**
      * Shutdown and cleanup
      */
     public void shutdown() {

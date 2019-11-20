@@ -17,6 +17,7 @@
 package de.hhu.bsinfo.dxmem.core;
 
 import de.hhu.bsinfo.dxmem.data.ChunkID;
+import de.hhu.bsinfo.dxmem.data.SpareLocalID;
 import de.hhu.bsinfo.dxutils.serialization.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -35,8 +36,10 @@ import java.util.concurrent.locks.ReentrantLock;
  * @author Stefan Nothaas, stefan.nothaas@hhu.de, 31.08.2018
  */
 public final class LIDStore implements Importable, Exportable {
-    private static final int STORE_CAPACITY = 10_000_000;
-    private static final long LOCALID_BITMASK = 0x0000FFFFFFFFFFFFL;
+    private static final int STORE_CAPACITY = 10;
+    private static final int MAX_INTERVAL_SIZE = 65_535;
+
+
     private static final Logger LOGGER = LogManager.getFormatterLogger(LIDStore.class.getSimpleName());
 
     private SpareLIDStore m_spareLIDStore;
@@ -47,7 +50,7 @@ public final class LIDStore implements Importable, Exportable {
      */
     LIDStore() {
         m_spareLIDStore = new SpareLIDStore();
-        m_localIDCounter = new AtomicLong(0);
+        m_localIDCounter = new AtomicLong(1);
     }
 
     public SpareLIDStore getM_spareLIDStore() {
@@ -62,8 +65,20 @@ public final class LIDStore implements Importable, Exportable {
      */
     LIDStore(final short p_ownNodeId, final CIDTable p_cidTable) {
         m_spareLIDStore = new SpareLIDStore(p_ownNodeId, p_cidTable, STORE_CAPACITY);
-        m_localIDCounter = new AtomicLong(0);
+        m_localIDCounter = new AtomicLong(1);
 
+    }
+
+    /**
+     * Creates an instance of LIDStore
+     *
+     * @param p_ownNodeId         Node id of current instance
+     * @param p_cidTable          CIDTable instance
+     * @param p_spareLIDStoreSize Size of the spare local id store (ring buffer)
+     */
+    LIDStore(final short p_ownNodeId, final CIDTable p_cidTable, final int p_spareLIDStoreSize) {
+        m_spareLIDStore = new SpareLIDStore(p_ownNodeId, p_cidTable, p_spareLIDStoreSize);
+        m_localIDCounter = new AtomicLong(1);
     }
 
     /**
@@ -164,15 +179,19 @@ public final class LIDStore implements Importable, Exportable {
 
     public boolean put(final long[] p_lids, final int p_offset, final int p_count) {
         assert p_lids.length > 0;
-        boolean ret = true;
+        long startIncrementCounter = m_localIDCounter.get();
         for (int i = 0; i < p_count; i++) {
 
             if (!this.put(p_lids[p_offset + i])) {
-                ret = false;
+                //spare Store is full!!
+                //move putPointer
+                m_spareLIDStore.undoPuts(-i);
+                m_localIDCounter.set(startIncrementCounter);
+                return false;
             }
-            ;
+
         }
-        return ret;
+        return true;
     }
 
     public boolean put(final long p_lid) {
@@ -180,42 +199,26 @@ public final class LIDStore implements Importable, Exportable {
         long p_currentLocalIDCounter = m_localIDCounter.get();
 
         if (p_lid < p_currentLocalIDCounter) {
-            //FIXME: we do not need the information if it is a remove. Just change getLIDPosition in such way, that its gives the position where it should inserted.
-            // Then insert it there. Two possibilities: 1. Extend an interval 2. Insert a single value and move all elements one field
-            int p_lidPos = m_spareLIDStore.getLIDPosition(p_lid);
+            // Two possibilities: 1. Extend an interval 2. Insert a single value and move all elements one field
+            //mainly reused ids either removed or ringbuffer was to full
+            return m_spareLIDStore.putLowerLID(p_lid);
 
-            if (p_lidPos != -1) {
-                LOGGER.trace("Putting lid is valid because its lid is free");
-                //TODO: Create new function to insert
-                //
-                m_spareLIDStore.putLowerLID(p_lid, p_lidPos);
-                //m_spareLIDStore.breakInterval(p_lidPos, p_lid);
-
-                return true;
-            }
-            //TODO:
-
-            LOGGER.error("Putting lid is unvalid because its lid is not free");
-
-            return false;
         } else if (p_lid > p_currentLocalIDCounter) {
             //put lid into spare until p_lid
             if (p_currentLocalIDCounter == p_lid - 1) {
-                m_spareLIDStore.put(m_localIDCounter.getAndSet(p_lid + 1));
-                return true;
+                return m_spareLIDStore.put(m_localIDCounter.getAndSet(p_lid + 1));
             }
-            if (p_lid - p_currentLocalIDCounter == 2) {
-                //do not save intervals with length 2, just 2 single values
-                m_spareLIDStore.put(m_localIDCounter.getAndIncrement());
-                m_spareLIDStore.put(m_localIDCounter.getAndIncrement());
-                m_localIDCounter.incrementAndGet();
-                return true;
+            boolean success = false;
+            long intervalSize = p_lid - p_currentLocalIDCounter;
+            //check if intervalSize is grater than 65.536
+            if (intervalSize > MAX_INTERVAL_SIZE) {
+                success = m_spareLIDStore.putInterval(p_currentLocalIDCounter, p_lid - 1);
+            } else {
+                success = m_spareLIDStore.putSingleValueInterval(p_currentLocalIDCounter, intervalSize);
+
             }
-
-            m_spareLIDStore.putInterval(m_localIDCounter.get(), p_lid - 1);
-
             m_localIDCounter.set(p_lid + 1);
-            return true;
+            return success;
         } else {
             // LOGGER.trace("LID is just next local id counter");
             //dont use get-Method because we dont want to get a lid of sparse
@@ -343,70 +346,36 @@ public final class LIDStore implements Importable, Exportable {
                 }
                 if (m_count > 0) {
                     ret = m_ringBufferSpareLocalIDs[m_getPosition];
-                    boolean isInterval = (ret >> 48) == 1;
+                    boolean isInterval = SpareLocalID.getEntryInfo(ret) == 1;
                     if (isInterval) {
-                        long startIntervalId = ret & LOCALID_BITMASK;
-                        long endIntervalId = m_ringBufferSpareLocalIDs[(m_getPosition + 1) % m_ringBufferSpareLocalIDs.length] & LOCALID_BITMASK;
+                        long startIntervalId = SpareLocalID.getLID(ret);
+                        long endIntervalId = SpareLocalID.getLID(m_ringBufferSpareLocalIDs[(m_getPosition + 1) % m_ringBufferSpareLocalIDs.length]);
                         ret = startIntervalId;
                         if (startIntervalId + 1 == endIntervalId) {
                             //only one element left
                             m_ringBufferSpareLocalIDs[m_getPosition] = 0;
-                            m_ringBufferSpareLocalIDs[(m_getPosition + 1) % m_ringBufferSpareLocalIDs.length] = getSparseLocalID(false, endIntervalId);
+                            moveGetPointer(1);
+                            m_ringBufferSpareLocalIDs[m_getPosition] = SpareLocalID.getSpareLocalID(false, endIntervalId);
                             m_count--;
                             m_overallCount--;
                             m_freeLIDs--;
-                            m_getPosition = (m_getPosition + 1) % m_ringBufferSpareLocalIDs.length;
                         } else {
                             //just shrink interval
                             m_freeLIDs--;
-                            m_ringBufferSpareLocalIDs[m_getPosition] = getSparseLocalID(true, startIntervalId + 1);
+                            m_ringBufferSpareLocalIDs[m_getPosition] = SpareLocalID.getSpareLocalID(true, startIntervalId + 1);
                         }
                     } else {
                         //just return single value
 
-                        ret = ret & LOCALID_BITMASK;
+                        ret = SpareLocalID.getLID(ret);
                         m_count--;
                         m_overallCount--;
                         m_freeLIDs--;
-                        m_getPosition = (m_getPosition + 1) % m_ringBufferSpareLocalIDs.length;
+                        moveGetPointer(1);
                     }
                 }
                 m_ringBufferLock.unlock();
             }
-            return ret;
-        }
-
-        public long get(final long p_lid) {
-            long ret = -1;
-
-            if (m_overallCount > 0) {
-                m_ringBufferLock.lock();
-
-                if (m_count == 0 && m_overallCount > 0) {
-                    // ignore return value
-                    refillStore();
-                }
-
-                if (m_count > 0) {
-
-                    int p_currentPos = m_getPosition;
-                    while (p_currentPos > 0) {
-                        long p_localSpareLocalID = m_ringBufferSpareLocalIDs[p_currentPos];
-                        if (p_localSpareLocalID == p_lid) {
-                            break;
-                        }
-                        p_currentPos = (p_currentPos - 1) % m_ringBufferSpareLocalIDs.length;
-                    }
-
-                    m_getPosition = (m_getPosition + 1) % m_ringBufferSpareLocalIDs.length;
-                    m_freeLIDs--;
-                    m_count--;
-                    m_overallCount--;
-                }
-
-                m_ringBufferLock.unlock();
-            }
-
             return ret;
         }
 
@@ -424,7 +393,6 @@ public final class LIDStore implements Importable, Exportable {
             assert p_count > 0;
             int counter = 0;
             // lids in store or zombie entries in table
-
             if (m_overallCount > 0) {
                 m_ringBufferLock.lock();
                 int restCount = p_count;
@@ -434,31 +402,26 @@ public final class LIDStore implements Importable, Exportable {
                         refillStore();
                     }
                     long currSparseEntry = m_ringBufferSpareLocalIDs[m_getPosition];
-                    boolean isInterval = (currSparseEntry >> 48) == 1;
-                    if (isInterval) {
-                        long startIntervalId = currSparseEntry & LOCALID_BITMASK;
-                        long endIntervalId = m_ringBufferSpareLocalIDs[(m_getPosition + 1) % m_ringBufferSpareLocalIDs.length] & LOCALID_BITMASK;
-                        long intervalSize = endIntervalId - startIntervalId + 1;
 
+                    long isInterval = currSparseEntry >> 48;
+                    isInterval = isInterval < 0 ? SpareLocalID.getSingleEntryIntervalSize(currSparseEntry) : isInterval;
+                    if (isInterval > 1) {
+
+                        //singleValueInterval
+                        long startIntervalId = SpareLocalID.getLID(currSparseEntry);
+                        long intervalSize = SpareLocalID.getSingleEntryIntervalSize(currSparseEntry);
                         if (intervalSize > restCount) {
-                  //just shrink
+                            //just shrink
                             for (int i = 0; i < restCount; i++) {
 
                                 p_lids[p_offset + i + counter] = startIntervalId + i;
                             }
                             if (intervalSize - restCount == 1) {
                                 //only one value left
-                                m_getPosition = (m_getPosition + 1) % m_ringBufferSpareLocalIDs.length;
-                                m_ringBufferSpareLocalIDs[m_getPosition] = getSparseLocalID(false, endIntervalId);
-                                m_count--;
-                                m_overallCount--;
-                            } else if (intervalSize - restCount == 2) {
-                                //two single values left
-                                m_ringBufferSpareLocalIDs[m_getPosition] = getSparseLocalID(false, startIntervalId + restCount);
-                                m_ringBufferSpareLocalIDs[(m_getPosition + 1) % m_ringBufferSpareLocalIDs.length] = getSparseLocalID(false, endIntervalId);
+                                m_ringBufferSpareLocalIDs[m_getPosition] = SpareLocalID.getSpareLocalID(false, startIntervalId + intervalSize - 1);
                             } else {
                                 //interval just shrinks left site
-                                m_ringBufferSpareLocalIDs[m_getPosition] = getSparseLocalID(true, startIntervalId + restCount);
+                                m_ringBufferSpareLocalIDs[m_getPosition] = SpareLocalID.getSingleEntryIntervalID(startIntervalId + restCount, intervalSize - restCount);
                             }
                             counter = p_count;
                             m_freeLIDs -= restCount;
@@ -472,25 +435,78 @@ public final class LIDStore implements Importable, Exportable {
                             }
                             restCount -= intervalSize;
                             counter += intervalSize;
-                            m_count -= 2;
-                            m_overallCount -= 2;
+                            m_count--;
                             m_freeLIDs -= intervalSize;
-
-                            m_getPosition = (m_getPosition + 2) % m_ringBufferSpareLocalIDs.length;
+                            m_ringBufferSpareLocalIDs[m_getPosition] = 0;
+                            moveGetPointer(1);
                         }
 
-                    } else {
+                    } else if (isInterval == 1) {
+                        long startIntervalId = SpareLocalID.getLID(currSparseEntry);
+                        long endIntervalId = SpareLocalID.getLID(m_ringBufferSpareLocalIDs[(m_getPosition + 1) % m_ringBufferSpareLocalIDs.length]);
+                        long intervalSize = endIntervalId - startIntervalId + 1;
+                        if (intervalSize > restCount) {
+                            //just shrink
+                            for (int i = 0; i < restCount; i++) {
+
+                                p_lids[p_offset + i + counter] = startIntervalId + i;
+                            }
+                            if (intervalSize - restCount == 1) {
+                                //only one value left
+                                m_ringBufferSpareLocalIDs[m_getPosition] = 0;
+                                moveGetPointer(1);
+                                m_ringBufferSpareLocalIDs[m_getPosition] = SpareLocalID.getSpareLocalID(false, endIntervalId);
+                                m_count--;
+
+                            } else if (intervalSize - restCount <= MAX_INTERVAL_SIZE && intervalSize - restCount != 1) {
+                                //one single value interval left
+                                m_ringBufferSpareLocalIDs[m_getPosition] = 0;
+                                moveGetPointer(1);
+
+                                m_ringBufferSpareLocalIDs[m_getPosition] = SpareLocalID.getSingleEntryIntervalID(startIntervalId + restCount, (endIntervalId - startIntervalId + 1) - restCount);
+                                m_count--;
+
+                            } else {
+                                //interval just shrinks left site
+                                m_ringBufferSpareLocalIDs[m_getPosition] = SpareLocalID.getSpareLocalID(true, startIntervalId + restCount);
+
+                            }
+                            counter = p_count;
+                            m_freeLIDs -= restCount;
+                            restCount = 0;
+
+                        } else if (intervalSize <= restCount) {
+                            //get whole interval and move
+
+                            for (int i = 0; i < intervalSize; i++) {
+                                p_lids[p_offset + i + counter] = startIntervalId + i;
+                            }
+
+                            restCount -= intervalSize;
+                            counter += intervalSize;
+                            m_count -= 2;
+                            m_freeLIDs -= intervalSize;
+                            m_ringBufferSpareLocalIDs[m_getPosition] = 0;
+                            m_ringBufferSpareLocalIDs[(m_getPosition + 1) % m_ringBufferSpareLocalIDs.length] = 0;
+
+                            moveGetPointer(2);
+
+                        }
+
+                    } else if (isInterval == 0) {
                         //just return single value
-                        p_lids[p_offset + counter] = currSparseEntry & LOCALID_BITMASK;
+                        p_lids[p_offset + counter] = SpareLocalID.getLID(currSparseEntry);
                         restCount--;
                         counter++;
                         m_count--;
-                        m_overallCount--;
                         m_freeLIDs--;
-                        m_getPosition = (m_getPosition + 1) % m_ringBufferSpareLocalIDs.length;
+                        m_ringBufferSpareLocalIDs[m_getPosition] = 0;
+                        moveGetPointer(1);
+
                     }
 
                 } while (counter != p_count && restCount <= m_freeLIDs && (m_overallCount > 0 || m_count > 0));
+                m_overallCount -= counter;
                 m_ringBufferLock.unlock();
             }
 
@@ -498,152 +514,535 @@ public final class LIDStore implements Importable, Exportable {
         }
 
         /**
-         * Refill the store. This calls a deep search for zombie entries in the CIDTable
+         * Put a single LID to the store
          *
-         * @return True if zombie entries were found, false if none were found
+         * @param p_lid LID to add to the store
+         * @return True if successful, false if store is full (callers has to treat chunk as a zombie)
          */
-        private boolean refillStore() {
-            return m_cidTable.getAndEliminateZombies(m_ownNodeId, m_ringBufferSpareLocalIDs, m_putPosition,
-                    m_ringBufferSpareLocalIDs.length - m_count) > 0;
-        }
-
-        public boolean putLowerLID(final long p_lid, final int p_pos) {
-
+        public boolean put(final long p_lid) {
+            boolean ret;
             m_ringBufferLock.lock();
-            long p_sparseLidOfPos = m_ringBufferSpareLocalIDs[p_pos];
-            boolean isInterval = p_sparseLidOfPos >> 48 != 0;
-            long p_lidOfPos = p_sparseLidOfPos & LOCALID_BITMASK;
-            if (!isInterval) {
+            if (m_count + 1 < m_ringBufferSpareLocalIDs.length) {
+                m_ringBufferSpareLocalIDs[m_putPosition] = SpareLocalID.getSpareLocalID(false, p_lid);
+                m_count++;
+                m_overallCount++;
+                m_freeLIDs++;
+                movePutPointer(1);
 
-                return true;
+                ret = true;
+            } else {
+                ret = false;
             }
-            //extend interval
-            long p_nextSparseLid = m_ringBufferSpareLocalIDs[(p_pos + 1) % m_ringBufferSpareLocalIDs.length];
-            boolean isNextInterval = p_nextSparseLid >> 48 != 0;
-            long p_nextLid = p_nextSparseLid & LOCALID_BITMASK;
-
-
-            if (p_lidOfPos - 1 == p_lid) {
-                m_ringBufferSpareLocalIDs[p_pos] = getSparseLocalID(true, p_lid);
-                return true;
-            }
-            if (p_nextLid + 1 == p_lid) {
-                m_ringBufferSpareLocalIDs[(p_pos + 1) % m_ringBufferSpareLocalIDs.length] = getSparseLocalID(true, p_lid);
-            }
-
             m_ringBufferLock.unlock();
-            return true;
-
+            return ret;
         }
 
-
+        /**
+         * Puts and interval [p_startLID, p_endLID] into the ring buffer
+         *
+         * @param p_startLid Start-LID of the interval
+         * @param p_endLid   End-LID of the interval
+         * @return success or failure
+         */
         public boolean putInterval(final long p_startLid, final long p_endLid) {
             boolean ret;
-            // System.out.println("m_putPosition = " + m_putPosition);
             m_ringBufferLock.lock();
             if (m_count + 2 < m_ringBufferSpareLocalIDs.length) {
+                //Left border
+                m_ringBufferSpareLocalIDs[m_putPosition] = SpareLocalID.getSpareLocalID(true, p_startLid);
+                //move one position
+                movePutPointer(1);
 
-                m_ringBufferSpareLocalIDs[m_putPosition] = getSparseLocalID(true, p_startLid);
-                m_count++;
-                m_putPosition = (m_putPosition + 1) % m_ringBufferSpareLocalIDs.length;
-                m_ringBufferSpareLocalIDs[m_putPosition] = getSparseLocalID(true, p_endLid);
-                m_count++;
-                m_putPosition = (m_putPosition + 1) % m_ringBufferSpareLocalIDs.length;
+                //right border
+                m_ringBufferSpareLocalIDs[m_putPosition] = SpareLocalID.getSpareLocalID(true, p_endLid);
+
+                movePutPointer(1);
+
+                m_count += 2;
+                m_overallCount += 2;
                 m_freeLIDs += p_endLid - p_startLid + 1;
 
                 ret = true;
             } else {
                 ret = false;
             }
-            m_overallCount += 2;
             m_ringBufferLock.unlock();
             return ret;
         }
 
-        public boolean breakInterval(final int p_startPos, final long p_lid) {
+        /**
+         * Puts limited interval into the ring buffer. The interval can max. be 65535 long, otherwise use {@link #putInterval(long, long) putInterval} method.
+         *
+         * @param p_startLID   Inclusive Start-LID
+         * @param intervalSize Interval size. Inclusive Start-LID
+         * @return success or failure
+         */
+        public boolean putSingleValueInterval(final long p_startLID, final long intervalSize) {
             boolean ret;
             m_ringBufferLock.lock();
-            //check space
-            long p_startLid = m_ringBufferSpareLocalIDs[p_startPos] & LOCALID_BITMASK;
-            long p_endLid = m_ringBufferSpareLocalIDs[(p_startPos + 1) % m_ringBufferSpareLocalIDs.length] & LOCALID_BITMASK;
-            assert p_lid >= p_startLid && p_lid <= p_endLid;
+            if (m_count + 1 < m_ringBufferSpareLocalIDs.length) {
 
-            if (p_startLid == p_lid) {//left border
-                m_ringBufferSpareLocalIDs[p_startPos] = getSparseLocalID(true, p_startLid + 1);
+                //abuse ChunkID.getChunkID, because it is the same as we need
+                long singleValueInterval = SpareLocalID.getSingleEntryIntervalID(p_startLID, intervalSize);
+                m_ringBufferSpareLocalIDs[m_putPosition] = singleValueInterval;
+                m_count++;
+                m_overallCount++;
+                movePutPointer(1);
+                m_freeLIDs += intervalSize;
+
                 ret = true;
-            } else if (p_endLid == p_lid) {//right border
-                m_ringBufferSpareLocalIDs[(p_startPos + 1) % m_ringBufferSpareLocalIDs.length] = getSparseLocalID(true, p_endLid - 1);
-                ret = true;
-            } else {//in between
-                int p_numberOfFieldMoves = p_lid == p_startLid + 1 || p_lid == p_endLid - 1 ? 1 : 2;
-                if (m_count + p_numberOfFieldMoves < m_ringBufferSpareLocalIDs.length) {
-                    //first push all entries from end two field
-                    if (p_numberOfFieldMoves == 2) {
-                        moveElementsTwoFields(p_startPos, p_lid);
-                    } else {
-                        moveElementsOneField(p_startPos, p_lid);
-                    }
-                    ret = true;
-
-                } else {
-                    ret = false;
-
-                }
+            } else {
+                ret = false;
             }
             m_ringBufferLock.unlock();
-
             return ret;
         }
 
-        private void moveElementsOneField(int pos, long p_lid) {
-            int pushPointer = (pos + 1) % m_ringBufferSpareLocalIDs.length;
-            long p_lastLID = m_ringBufferSpareLocalIDs[pushPointer];
-            do {
-                pushPointer = (pushPointer + 1) % m_ringBufferSpareLocalIDs.length;
-                long tmp = m_ringBufferSpareLocalIDs[pushPointer];
-                m_ringBufferSpareLocalIDs[pushPointer] = p_lastLID;
+        //-----------------------Methods for putting a lower lid than the counter------------------------------------
 
-                p_lastLID = tmp;
-            } while (pushPointer <= m_putPosition);
-            m_putPosition = (m_putPosition + 1) % m_ringBufferSpareLocalIDs.length;
-            m_count++;
-            if ((m_ringBufferSpareLocalIDs[pos] & LOCALID_BITMASK) + 1 == p_lid) {
-                m_ringBufferSpareLocalIDs[pos] = getSparseLocalID(false, m_ringBufferSpareLocalIDs[pos] & LOCALID_BITMASK);
-                m_ringBufferSpareLocalIDs[(pos + 1) % m_ringBufferSpareLocalIDs.length] = getSparseLocalID(true, p_lid + 1);
+        /**
+         * Inserts a lid which is lower than the {@link #m_localIDCounter localIDCounter}.
+         * @param p_lid lid, which should inserted
+         * @return success or failure
+         */
+        public boolean putLowerLID(final long p_lid) {
+            if (m_overallCount > 0) {
+                m_ringBufferLock.lock();
+                if (m_count == 0 && m_overallCount > 0) {
+                    // ignore return value
+                    refillStore();
+                }
+                int ringBufferSize = m_ringBufferSpareLocalIDs.length;
+                int left = m_getPosition;
+                int right = m_putPosition;
+                boolean ret = false;
+                do {
+                    int expandType = getExpandTypeOfPosition(p_lid, left);
+                    if (expandType != 0) {
+                        System.out.println("expandType = " + expandType);
+                        switch (expandType) {
+                            case 1: //expand interval with p_lid left side
+                                return expandSingleValueToIntervalLeftSide(p_lid, left);
+                            case 2: //expand interval with p_lid right side
+                                return expandSingleValueToIntervalRightSide(p_lid, left);
+                            case 3: //expand interval with p_lid and next right entry
+                                combineIntervalWithRightSide(left);
+                                return true;
+                            case 4:
+                                ret = moveElementsOneField(left);
+                                m_ringBufferSpareLocalIDs[left] = SpareLocalID.getSpareLocalID(false, p_lid);
+                                return ret;
+                        }
+                        break;
+                    }
 
+                    long intervalMetaData = SpareLocalID.getEntryInfo(m_ringBufferSpareLocalIDs[left]);
+                    int step = intervalMetaData == 1 ? 2 : 1;
+                    left = (left + step) % ringBufferSize;
+                } while (left != right);
+
+            }
+            return false;
+        }
+
+        /**
+         * Combines the current entry with the lower lid and the right neighbour entry. It checks first what type the current entry is and then the neighbour.
+         * @param pos position of the current entry
+         */
+        private void combineIntervalWithRightSide(final int pos) {
+            long posEntry = m_ringBufferSpareLocalIDs[pos];
+            int nextPos = (pos + 1) % m_ringBufferSpareLocalIDs.length;
+
+            long nextEntry = m_ringBufferSpareLocalIDs[nextPos];
+            long currIntervalMetaData = SpareLocalID.getEntryInfo(posEntry);
+            currIntervalMetaData = currIntervalMetaData < 0 ? SpareLocalID.getSingleEntryIntervalSize(posEntry) : currIntervalMetaData;
+
+            if (currIntervalMetaData > 1) {
+                //single entry interval
+                long posID = SpareLocalID.getLID(posEntry);
+
+                long nextIntervalMetaData = SpareLocalID.getEntryInfo(nextEntry);
+                nextIntervalMetaData = nextIntervalMetaData < 0 ? SpareLocalID.getSingleEntryIntervalSize(nextEntry) : nextIntervalMetaData;
+
+                if (nextIntervalMetaData > 1) {
+                    //single entry interval next right to single entry interval
+                    if (currIntervalMetaData + nextIntervalMetaData + 1 > MAX_INTERVAL_SIZE) {
+                        m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSpareLocalID(true, posID);
+                        m_ringBufferSpareLocalIDs[nextPos] = SpareLocalID.getSpareLocalID(true, currIntervalMetaData + nextIntervalMetaData + 1);
+
+                    } else {
+                        moveElementsOneFieldBack(pos);
+                        m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSingleEntryIntervalID(posID, currIntervalMetaData + nextIntervalMetaData + 1);
+                    }
+                } else if (nextIntervalMetaData == 1) {
+                    //single entry interval next right to two entry interval
+                    long rightBorderEntry = m_ringBufferSpareLocalIDs[(nextPos + 1) % m_ringBufferSpareLocalIDs.length];
+                    long rightBorderID = SpareLocalID.getLID(rightBorderEntry);
+                    moveElementsOneFieldBack(nextPos);
+                    m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSpareLocalID(true, posID);
+                    m_ringBufferSpareLocalIDs[nextPos] = SpareLocalID.getSpareLocalID(true, rightBorderID);
+
+                } else {
+                    //single entry interval next right to single value
+                    if (currIntervalMetaData + 1 > MAX_INTERVAL_SIZE) {
+                        m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSpareLocalID(true, posID);
+                        m_ringBufferSpareLocalIDs[nextPos] = SpareLocalID.getSpareLocalID(true, posID + currIntervalMetaData + 1);
+
+                    } else {
+                        moveElementsOneFieldBack(pos);
+                        m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSingleEntryIntervalID(posID, currIntervalMetaData + 1);
+                    }
+                }
+
+            } else if (currIntervalMetaData == 1) {
+                //two entry interval [tested]
+
+                nextPos = (nextPos + 1) % m_ringBufferSpareLocalIDs.length;
+                nextEntry = m_ringBufferSpareLocalIDs[nextPos];
+
+                long nextIntervalMetaData = SpareLocalID.getEntryInfo(nextEntry);
+                nextIntervalMetaData = nextIntervalMetaData < 0 ? SpareLocalID.getSingleEntryIntervalSize(nextEntry) : nextIntervalMetaData;
+                if (nextIntervalMetaData > 1) {
+                    //two entry interval next right to single entry interval
+                    long rightBorderID = SpareLocalID.getLID(nextEntry) + nextIntervalMetaData - 1;
+                    nextPos = (pos + 1) % m_ringBufferSpareLocalIDs.length;
+                    moveElementsOneFieldBack(nextPos);
+                    m_ringBufferSpareLocalIDs[nextPos] = SpareLocalID.getSpareLocalID(true, rightBorderID);
+
+                } else if (nextIntervalMetaData == 1) {
+                    //two entry interval next right to two entry interval
+                    int nextRightBorderPos = (nextPos + 1) % m_ringBufferSpareLocalIDs.length;
+                    long rightBorderID = SpareLocalID.getLID(m_ringBufferSpareLocalIDs[nextRightBorderPos]);
+                    moveElementsOneFieldBack(nextPos);
+                    nextPos = (nextPos - 1) % m_ringBufferSpareLocalIDs.length;
+                    moveElementsOneFieldBack(nextPos);
+                    //maybe better method where direct 2 steps back
+                    m_ringBufferSpareLocalIDs[nextPos] = SpareLocalID.getSpareLocalID(true, rightBorderID);
+                } else {
+                    //two entry interval next right to single value
+                    long singleValueID = SpareLocalID.getLID(nextEntry);
+                    nextPos = (pos + 1) % m_ringBufferSpareLocalIDs.length;
+                    moveElementsOneFieldBack(nextPos);
+                    m_ringBufferSpareLocalIDs[nextPos] = SpareLocalID.getSpareLocalID(true, singleValueID);
+                }
             } else {
-                m_ringBufferSpareLocalIDs[(pos + 1) % m_ringBufferSpareLocalIDs.length] = getSparseLocalID(true, p_lid - 1);
-                m_ringBufferSpareLocalIDs[(pos + 2) % m_ringBufferSpareLocalIDs.length] = getSparseLocalID(false, m_ringBufferSpareLocalIDs[(pos + 2) % m_ringBufferSpareLocalIDs.length] & LOCALID_BITMASK);
+                //single value [tested]
 
+                long posID = SpareLocalID.getLID(posEntry);
+
+                long nextIntervalMetaData = SpareLocalID.getEntryInfo(nextEntry);
+                nextIntervalMetaData = nextIntervalMetaData < 0 ? SpareLocalID.getSingleEntryIntervalSize(nextEntry) : nextIntervalMetaData;
+                if (nextIntervalMetaData > 1) {
+                    //single value next right to single entry interval
+                    //check size
+                    if (nextIntervalMetaData + 1 > MAX_INTERVAL_SIZE) {
+                        m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSpareLocalID(true, posID);
+                        m_ringBufferSpareLocalIDs[nextPos] = SpareLocalID.getSpareLocalID(true, posID + nextIntervalMetaData + 1);
+
+                    } else {
+                        moveElementsOneFieldBack(pos);
+                        m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSingleEntryIntervalID(posID, nextIntervalMetaData + 2);
+
+                    }
+                } else if (nextIntervalMetaData == 1) {
+                    //single value next right to two entry interval
+                    int rightBorderEntryPos = (nextPos + 1) % m_ringBufferSpareLocalIDs.length;
+                    long rightBorderEntry = m_ringBufferSpareLocalIDs[rightBorderEntryPos];
+                    long rightBorderID = SpareLocalID.getLID(rightBorderEntry);
+                    moveElementsOneFieldBack(nextPos);
+                    m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSpareLocalID(true, posID);
+                    m_ringBufferSpareLocalIDs[nextPos] = SpareLocalID.getSpareLocalID(true, rightBorderID);
+
+                } else {
+                    //single value next right to single value
+                    moveElementsOneFieldBack(pos);
+                    m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSingleEntryIntervalID(posID, 3);
+                }
             }
         }
 
-        private void moveElementsTwoFields(int pos, long p_lid) {
-            int pushPointer = (m_putPosition - 1) % m_ringBufferSpareLocalIDs.length;
-            long startIntervalId = m_ringBufferSpareLocalIDs[pos] & LOCALID_BITMASK;
-            long endIntervalId = m_ringBufferSpareLocalIDs[(pos + 1) % m_ringBufferSpareLocalIDs.length] & LOCALID_BITMASK;
-            long leftIntervalSize = p_lid - startIntervalId;
-            long rightIntervalSize = endIntervalId - p_lid;
+        /**
+         * Transforms a single value entry to an interval with the lower lid. Right border is the lower lid
+         * @param p_lid lower lid
+         * @param pos position of the single value entry
+         * @return success or failure
+         */
+        private boolean expandSingleValueToIntervalRightSide(final long p_lid, final int pos) {
+            long posEntry = m_ringBufferSpareLocalIDs[pos];
+            long posID = SpareLocalID.getLID(posEntry);
+            long intervalMetaData = SpareLocalID.getEntryInfo(posEntry);
+            intervalMetaData = intervalMetaData < 0 ? SpareLocalID.getSingleEntryIntervalSize(posEntry) : intervalMetaData;
+
+            if (intervalMetaData > 1) {
+                //single entry interval
+                //check first if interval has enough space
+                if (intervalMetaData + 1 > MAX_INTERVAL_SIZE) {
+                    //not enough! move one and create a two entry interval
+                    boolean ret = moveElementsOneField(pos);
+                    if (ret) {
+                        m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSpareLocalID(true, posID);
+                        m_ringBufferSpareLocalIDs[(pos + 1) % m_ringBufferSpareLocalIDs.length] = SpareLocalID.getSpareLocalID(true, p_lid);
+
+                    }
+                    return ret;
+                } else {
+                    m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSingleEntryIntervalID(posID, intervalMetaData + 1);
+                    return true;
+
+                }
+            } else if (intervalMetaData == 1) {
+                m_ringBufferSpareLocalIDs[(pos + 1) % m_ringBufferSpareLocalIDs.length] = SpareLocalID.getSpareLocalID(true, p_lid);
+                return true;
+
+            } else {
+                m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSingleEntryIntervalID(posID, 2);
+                return true;
+            }
+        }
+
+        /**
+         * Transforms a single value entry to an interval with the lower lid. Left border of the interval is p_lid.
+         * @param p_lid lower lid
+         * @param pos position of the single value entry
+         * @return success or failure
+         */
+        private boolean expandSingleValueToIntervalLeftSide(final long p_lid, final int pos) {
+            long posEntry = m_ringBufferSpareLocalIDs[pos];
+            long intervalMetaData = SpareLocalID.getEntryInfo(posEntry);
+            intervalMetaData = intervalMetaData < 0 ? SpareLocalID.getSingleEntryIntervalSize(posEntry) : intervalMetaData;
+
+            if (intervalMetaData > 1) {
+                //single entry interval
+                //check first if interval has enough space
+                if (intervalMetaData + 1 > MAX_INTERVAL_SIZE) {
+                    //not enough! move one and create a two entry interval
+                    boolean ret = moveElementsOneField(pos);
+                    if (ret) {
+                        m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSpareLocalID(true, p_lid);
+                        m_ringBufferSpareLocalIDs[(pos + 1) % m_ringBufferSpareLocalIDs.length] = SpareLocalID.getSpareLocalID(true, p_lid + intervalMetaData);
+
+                    }
+                    return ret;
+                } else {
+                    m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSingleEntryIntervalID(p_lid, intervalMetaData + 1);
+                    return true;
+
+                }
+            } else if (intervalMetaData == 1) {
+                m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSpareLocalID(true, p_lid);
+                return true;
+
+            } else {
+                m_ringBufferSpareLocalIDs[pos] = SpareLocalID.getSingleEntryIntervalID(p_lid, 2);
+                return true;
+            }
+        }
+
+        /**
+         *  Checks for the lower lid for the current entry if it can be inserted there
+         * @param key lower lid
+         * @param entryPointer entry position
+         * @return 0: nothing can extended
+         *         1: entry can be extended left side with key
+         *         2: entry can be extended right side with key
+         *         3: entry can be combined right side with key and right neighbour
+         */
+        private int getExpandTypeOfPosition(long key, int entryPointer) {
+            long entry = m_ringBufferSpareLocalIDs[entryPointer];
+            long intervalMetaData = SpareLocalID.getEntryInfo(entry);
+            intervalMetaData = intervalMetaData < 0 ? SpareLocalID.getSingleEntryIntervalSize(entry) : intervalMetaData;
+            int nextLeftPointer = entryPointer == 0 ? 0 : (entryPointer - 1) % m_ringBufferSpareLocalIDs.length;
+            long nextLeftEntry = m_ringBufferSpareLocalIDs[nextLeftPointer];
+            long nextRightEntry = m_ringBufferSpareLocalIDs[(entryPointer + 1) % m_ringBufferSpareLocalIDs.length];
+            long leftBorder = -1;
+            long rightBorder = -1;
+
+            if (intervalMetaData > 1) {
+                //single value interval
+                leftBorder = SpareLocalID.getLID(entry);
+                rightBorder = leftBorder + intervalMetaData - 1;
+
+            } else if (intervalMetaData == 1) {
+                //two entry interval
+                leftBorder = SpareLocalID.getLID(entry);
+                rightBorder = SpareLocalID.getLID(m_ringBufferSpareLocalIDs[(entryPointer + 1) % m_ringBufferSpareLocalIDs.length]);
+                nextRightEntry = m_ringBufferSpareLocalIDs[(entryPointer + 2) % m_ringBufferSpareLocalIDs.length];
+            } else if (intervalMetaData == 0) {
+                //single value
+                leftBorder = SpareLocalID.getLID(entry);
+                rightBorder = SpareLocalID.getLID(entry);
+
+            }
+
+            int typeExpand = checkNeighboursForExpand(key, leftBorder, rightBorder, nextLeftEntry, nextRightEntry);
+
+            return typeExpand;
+        }
+
+        /**
+         * Checks the left and right neighbour of an entry in the buffer depending of key. Checking includes either the
+         * entry can extended with only the key or a neighbour
+         *
+         * @param key inserted lower lid
+         * @param leftBorderID lid of left border of current entry
+         * @param rightBorderID lid of right border of current entry
+         * @param nextLeftEntry left neighbour entry
+         * @param nextRightEntry right neighbour entry
+         * @return 0: nothing can extended
+         *         1: entry can be extended left side with key
+         *         2: entry can be extended right side with key
+         *         3: entry can be combined right side with key and right neighbour
+         */
+        private int checkNeighboursForExpand(long key, long leftBorderID, long rightBorderID, long nextLeftEntry, long nextRightEntry) {
+            long intervalMetaData = SpareLocalID.getEntryInfo(nextLeftEntry);
+            intervalMetaData = intervalMetaData < 0 ? SpareLocalID.getSingleEntryIntervalSize(nextLeftEntry) : intervalMetaData;
+
+            long nextLeftEntryID = intervalMetaData > 1 ? SpareLocalID.getLID(nextLeftEntry) + intervalMetaData - 1 : SpareLocalID.getLID(nextLeftEntry);
+            long nextRightEntryID = SpareLocalID.getLID(nextRightEntry);
+
+            if (leftBorderID - 1 == key) {
+                if (nextLeftEntryID == 0) {
+                    //left entry is empty
+                    return 1;
+                } else {
+                    if (nextLeftEntryID == key - 1) {
+                        //can be ignored will be handled either with 1 oder 3
+                        return 0;
+                    } else {
+                        //just extend current entry with key
+                        return 1;
+
+                    }
+                }
+            } else if (rightBorderID + 1 == key) {
+                if (nextRightEntryID == 0) {
+                    //right entry is empty
+                    return 2;
+
+                } else {
+                    if (nextRightEntryID == key + 1) {
+                        //right border of the next left entry is next value of key (key -1) -> combine with left entry
+                        return 3;
+
+                    } else {
+                        //just extend current entry with key
+                        return 2;
+
+                    }
+                }
+            }
+            //now check if it should saved as single value left or right
+            if (key > nextLeftEntryID && key < leftBorderID) {
+                return 4;
+            }
+
+            return 0;
+        }
+
+        /**
+         * Pushes all elements from pos one field
+         * @param pos starting position
+         * @return True, if enough space is free. False, when buffer is full
+         */
+        private boolean moveElementsOneField(final int pos) {
+            boolean ret;
+            if (m_count + 1 < m_ringBufferSpareLocalIDs.length) {
+                int til = m_putPosition;
+                int bufferSize = m_ringBufferSpareLocalIDs.length;
+                long p_lastLID = m_ringBufferSpareLocalIDs[pos];
+                int currPointer = (pos + 1) % bufferSize;
+
+                do {
+                    long tmp = m_ringBufferSpareLocalIDs[currPointer];
+                    m_ringBufferSpareLocalIDs[currPointer] = p_lastLID;
+                    p_lastLID = tmp;
+                    currPointer = (currPointer + 1) % bufferSize;
+
+                } while (currPointer != til + 1);
+
+                m_count++;
+                ret = true;
+
+            } else {
+                ret = false;
+
+            }
+            m_overallCount++;
+            return ret;
+        }
+
+        /**
+         * Moves all elements from m_putPosition one field back to til (exclusive)
+         * @param til border
+         */
+        private void moveElementsOneFieldBack(final int til) {
+            int bufferSize = m_ringBufferSpareLocalIDs.length;
+            int currPointer = (m_putPosition - 1) % bufferSize;
+            long p_lastLID = m_ringBufferSpareLocalIDs[currPointer];
+            m_ringBufferSpareLocalIDs[currPointer] = 0;
+            currPointer = (currPointer - 1) % bufferSize;
 
             do {
 
-                m_ringBufferSpareLocalIDs[pushPointer + 2] = m_ringBufferSpareLocalIDs[pushPointer];
-                pushPointer = (pushPointer - 1) % m_ringBufferSpareLocalIDs.length;
+                long tmp = m_ringBufferSpareLocalIDs[currPointer];
+                m_ringBufferSpareLocalIDs[currPointer] = p_lastLID;
+                p_lastLID = tmp;
+                currPointer = (currPointer - 1) % bufferSize;
 
-            } while (pushPointer > pos);
-            m_putPosition = (m_putPosition + 2) % m_ringBufferSpareLocalIDs.length;
-            m_count += 2;
-            m_ringBufferSpareLocalIDs[pos] = getSparseLocalID(!(leftIntervalSize == 2), m_ringBufferSpareLocalIDs[pos] & LOCALID_BITMASK);
-            m_ringBufferSpareLocalIDs[(pos + 1) % m_ringBufferSpareLocalIDs.length] = getSparseLocalID(!(leftIntervalSize == 2), p_lid - 1);
-
-            m_ringBufferSpareLocalIDs[(pos + 2) % m_ringBufferSpareLocalIDs.length] = getSparseLocalID(!(rightIntervalSize == 2), p_lid + 1);
-            m_ringBufferSpareLocalIDs[(pos + 3) % m_ringBufferSpareLocalIDs.length] = getSparseLocalID(!(rightIntervalSize == 2), m_ringBufferSpareLocalIDs[(pos + 3) % m_ringBufferSpareLocalIDs.length] & LOCALID_BITMASK);
+            } while (currPointer != til - 1);
+            m_putPosition = (m_putPosition - 1) % bufferSize;
+            m_count--;
+            m_overallCount--;
         }
 
+
+        /**
+         * Refill the store. This calls a deep search for zombie entries in the CIDTable
+         *
+         * @return True if zombie entries were found, false if none were found
+         */
+        private boolean refillStore() {
+            return m_cidTable.getAndEliminateZombies(m_ownNodeId, m_ringBufferSpareLocalIDs, m_putPosition, m_getPosition,
+                    m_ringBufferSpareLocalIDs.length - m_count) > 0;
+        }
+
+        /**
+         * Moves the Put-Pointer
+         *
+         * @param p_step Number of steps to move
+         */
+        private void movePutPointer(final int p_step) {
+            m_putPosition = (m_putPosition + p_step) % m_ringBufferSpareLocalIDs.length;
+        }
+
+        private void undoPuts(final int p_numberOfUndos) {
+            m_ringBufferLock.lock();
+
+            movePutPointer(-1 * p_numberOfUndos);
+
+            m_ringBufferLock.unlock();
+        }
+
+        /**
+         * Moves the Get-Pointer
+         *
+         * @param p_step Number of steps to move
+         */
+        private void moveGetPointer(final int p_step) {
+            m_getPosition = (m_getPosition + p_step) % m_ringBufferSpareLocalIDs.length;
+        }
+
+
+        //--------------------------------------VALIDITATION-PRINTS----------------------------------------------------
         public void printRingBufferSpareLocalIDs() {
             LOGGER.trace("Logging Ring Buffer");
-            for (int i = 1; i < m_count + 1; i++) {
-                LOGGER.debug("Position: %d, Value: %d, isIntervall: %d, id: %d", (m_putPosition - i) % m_ringBufferSpareLocalIDs.length, m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length], m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length] >> 48, m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length] & LOCALID_BITMASK);
+            for (int i = 0; i < m_ringBufferSpareLocalIDs.length; i++) {
+                int pos = i;//(m_putPosition - i) % m_ringBufferSpareLocalIDs.length;
+                long value = m_ringBufferSpareLocalIDs[pos];
+                long intervalInfo = SpareLocalID.getEntryInfo(m_ringBufferSpareLocalIDs[pos]);
+                intervalInfo = intervalInfo < 0 ? SpareLocalID.getSingleEntryIntervalSize(m_ringBufferSpareLocalIDs[pos]) : intervalInfo;
+                long id = SpareLocalID.getLID(m_ringBufferSpareLocalIDs[pos]);
+                LOGGER.debug("Position: %d, Value: %d, Intervalinfo: %d, id: %d", pos, value, intervalInfo, id);
             }
             LOGGER.debug("M_freeLIDs: %d", m_freeLIDs);
         }
@@ -653,7 +1052,12 @@ public final class LIDStore implements Importable, Exportable {
             try {
                 BufferedWriter br = new BufferedWriter(new FileWriter("/home/vlz/ringBufferPrint4.txt"));
                 for (int i = 1; i < m_count + 1; i++) {
-                    br.write(String.format("Position: %d, Value: %d, isIntervall: %d, id: %d", (m_putPosition - i) % m_ringBufferSpareLocalIDs.length, m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length], m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length] >> 48, m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length] & LOCALID_BITMASK));
+                    int pos = (m_putPosition - i) % m_ringBufferSpareLocalIDs.length;
+                    long value = m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length];
+                    long intervalInfo = m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length] >> 48;
+                    intervalInfo = intervalInfo < 0 ? SpareLocalID.getSingleEntryIntervalSize(m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length]) : intervalInfo;
+                    long id = SpareLocalID.getLID(m_ringBufferSpareLocalIDs[(m_putPosition - i) % m_ringBufferSpareLocalIDs.length]);
+                    br.write(String.format("Position: %d, Value: %d, isIntervall: %d, id: %d", pos, value, intervalInfo, id));
                     br.newLine();
                     br.flush();
                 }
@@ -675,120 +1079,15 @@ public final class LIDStore implements Importable, Exportable {
         }
 
         /**
-         * Put a LID to the store
+         * Getter
+         * Only for testing
          *
-         * @param p_lid LID to add to the store
-         * @return True if successful, false if store is full (callers has to treat chunk as a zombie)
+         * @return the ring buffer, where unused local-ids are stored
          */
-        public boolean put(final long p_lid) {
-            boolean ret;
-            m_ringBufferLock.lock();
-            if (m_count + 1 < m_ringBufferSpareLocalIDs.length) {
-                m_ringBufferSpareLocalIDs[m_putPosition] = getSparseLocalID(false, p_lid);
-                m_count++;
-                m_overallCount++;
-                m_freeLIDs++;
-                m_putPosition = (m_putPosition + 1) % m_ringBufferSpareLocalIDs.length;
-
-                ret = true;
-            } else {
-                ret = false;
-            }
-            m_ringBufferLock.unlock();
-            return ret;
+        public long[] getRingBufferSpareLocalIDs() {
+            return m_ringBufferSpareLocalIDs;
         }
-
-        /**
-         * Put a LID to the store
-         *
-         * @param p_lids LID to add to the store
-         * @return True if successful, false if store is full (callers has to treat chunk as a zombie)
-         */
-        public boolean put(final long[] p_lids) {
-            boolean ret;
-
-            m_ringBufferLock.lock();
-
-            if (m_count + p_lids.length - 1 < m_ringBufferSpareLocalIDs.length) {
-                for (long p_lid : p_lids) {
-                    m_ringBufferSpareLocalIDs[m_putPosition] = p_lid;
-                    m_putPosition = (m_putPosition + 1) % m_ringBufferSpareLocalIDs.length;
-                    m_count++;
-                }
-                ret = true;
-            } else {
-                ret = false;
-            }
-
-            m_overallCount++;
-
-            m_ringBufferLock.unlock();
-            return ret;
-        }
-
-
-        public int getLIDPosition(final long p_lid) {
-            if (m_overallCount > 0) {
-                m_ringBufferLock.lock();
-                if (m_count == 0 && m_overallCount > 0) {
-                    // ignore return value
-                    refillStore();
-                }
-                //TODO: extend to get Position when its not in an interval
-
-                if (m_count > 0) {
-                    int p_currentPos = m_getPosition;
-                    long p_lastID = -1;
-                    int p_lastIDPos = -1;
-                    //TODO: Extend to binary search?
-
-                    do {
-                        long p_localSpareLocalID = m_ringBufferSpareLocalIDs[p_currentPos];
-                        boolean p_isInterval = p_localSpareLocalID >> 48 != 0;
-                        long p_curr_lid = p_localSpareLocalID & LOCALID_BITMASK;
-
-                        if (p_lastID != -1 && (p_lid + 1 > p_lastID && p_lid < p_curr_lid - 1)) {
-                            assert p_curr_lid - p_lastID > 1;
-                            return p_lastIDPos;
-                        }
-
-                        if (p_isInterval) {
-                            long p_endIntervalLid = m_ringBufferSpareLocalIDs[(p_currentPos + 1) % m_ringBufferSpareLocalIDs.length];
-                            long p_endRealID = p_endIntervalLid & LOCALID_BITMASK;
-                            if (p_lastID + 1 == p_lid && p_lid + 1 == p_curr_lid) {
-                                return p_lastIDPos;
-                            }
-
-                            if (p_lid >= p_curr_lid - 1 && p_lid <= p_endRealID + 1) {
-                                return p_currentPos;
-                            }
-                            p_lastID = p_endRealID;
-                            p_lastIDPos = (p_currentPos + 1) % m_ringBufferSpareLocalIDs.length;
-                        }
-
-                        if (p_curr_lid == p_lid) {
-                            return p_currentPos;
-                        }
-
-
-                        if (p_isInterval) {
-                            p_currentPos = (p_currentPos + 1) % m_ringBufferSpareLocalIDs.length;
-                        } else {
-                            p_lastID = p_curr_lid;
-                            p_lastIDPos = p_currentPos;
-                        }
-                        p_currentPos = (p_currentPos + 1) % m_ringBufferSpareLocalIDs.length;
-                    } while (p_currentPos < m_putPosition);
-                }
-                m_ringBufferLock.unlock();
-            }
-            return -1;
-        }
-
-        private long getSparseLocalID(boolean isInterval, long lid) {
-            return (long) (isInterval ? (short) 1 : (short) 0) << 48 | lid & LOCALID_BITMASK;
-
-        }
+        //--------------------------------------EXPORT/IMPORT--------------------------------------------------------
 
         @Override
         public void exportObject(final Exporter p_exporter) {
@@ -812,5 +1111,7 @@ public final class LIDStore implements Importable, Exportable {
         public int sizeofObject() {
             return ObjectSizeUtil.sizeofLongArray(m_ringBufferSpareLocalIDs) + Integer.BYTES * 3 + Long.BYTES;
         }
+
+
     }
 }

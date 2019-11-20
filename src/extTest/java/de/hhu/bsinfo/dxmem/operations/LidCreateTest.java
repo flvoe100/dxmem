@@ -2,7 +2,6 @@ package de.hhu.bsinfo.dxmem.operations;
 
 import de.hhu.bsinfo.dxmem.*;
 import de.hhu.bsinfo.dxmem.data.ChunkID;
-import de.hhu.bsinfo.dxmem.data.ChunkLockOperation;
 import de.hhu.bsinfo.dxutils.unit.StorageUnit;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -151,54 +150,28 @@ public class LidCreateTest {
     public void simpleLidCreate() {
         Configurator.setRootLevel(Level.TRACE);
 
-        DXMem memory = new DXMem(DXMemoryTestConstants.NODE_ID, DXMemoryTestConstants.HEAP_SIZE_SMALL);
+        DXMem memory = new DXMem(DXMemoryTestConstants.NODE_ID, DXMemoryTestConstants.HEAP_SIZE_LARGE);
         TestChunk[] testChunk = new TestChunk[12];
         TestChunk dummy = new TestChunk(true);
-        long[] lids = {0, 7, 11};
-        memory.create().create(lids, 0, 3, dummy.sizeofObject(), false, true);
-        // memory.create().create(dummy.sizeofObject(), 0, ChunkLockOperation.NONE);
+        long[] lids = {3, 65540};
+
+        memory.create().create(lids, 0, lids.length, dummy.sizeofObject(), false, true);
         //  long id = memory.create().create(dummy.sizeofObject(), 0, ChunkLockOperation.NONE);
         //memory.create().create(dummy.sizeofObject(), 7, ChunkLockOperation.NONE);
         //memory.create().create(dummy.sizeofObject(), 11, ChunkLockOperation.NONE);
 
         memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
+
+
+         memory.remove().remove(ChunkID.getChunkID(DXMemoryTestConstants.NODE_ID, 3));
+        memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
+
         //LOGGER.debug("---------------------------------");
-        for (int i = 0; i < testChunk.length; i++) {
-            testChunk[i] = new TestChunk(true);
-        }
-        long[] p_cids = new long[testChunk.length];
-        memory.create().create(p_cids, 0, p_cids.length, dummy.sizeofObject(), false, false);
-
-        for (int i = 0; i < p_cids.length; i++) {
-            System.out.println("p_cids = " + ChunkID.getLocalID(p_cids[i]));
-        }
-
-
-             /*
-        memory.create().create(dummy.sizeofObject(), 10, ChunkLockOperation.NONE);
-        memory.create().create(dummy.sizeofObject(), 41, ChunkLockOperation.NONE);
+        /*
+        long[] cids = new long[65535];
+        memory.create().create(cids, 0, cids.length, dummy.sizeofObject(), false, false);
         memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
-
-        memory.create().create(dummy.sizeofObject(), 48, ChunkLockOperation.NONE);
-        memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
-
-        memory.create().create(dummy.sizeofObject(), 50, ChunkLockOperation.NONE);
-        memory.create().create(dummy.sizeofObject(), 59, ChunkLockOperation.NONE);
-
-
-        for (int i = 0; i < 5; i++) {
-            testChunk[i] = new TestChunk(true);
-            memory.create().create(testChunk[i]);
-            System.out.println("testChunkID = " + ChunkID.getLocalID(testChunk[i].getID()));
-
-        }
-       //memory.create().create(testChunk.sizeofObject(), 0, ChunkLockOperation.NONE);
-        //memory.create().create(testChunk.sizeofObject(), 1, ChunkLockOperation.NONE);
-        memory.create().create(testChunk.sizeofObject(), 2, ChunkLockOperation.NONE);
-        memory.create().create(testChunk.sizeofObject(), 3, ChunkLockOperation.NONE);
-        memory.create().create(testChunk.sizeofObject(), 4, ChunkLockOperation.NONE);*/
-
-        //memory.create().create(testChunk.sizeofObject(), 5, ChunkLockOperation.NONE);
+         */
     }
 
     @Test
@@ -210,7 +183,7 @@ public class LidCreateTest {
         }
         DXMem memory = new DXMem(DXMemoryTestConstants.NODE_ID, DXMemoryTestConstants.HEAP_SIZE_LARGE);
 
-        String vfile = "/home/vlz/bsinfo/datasets/dota-league/dota-league.v";
+        String vfile = "/home/vlz/bsinfo/datasets/datagen-8_7-zf.v";
         String efile = "/home/vlz/bsinfo/datasets/dota-league/dota-league.e";
 
         try {
@@ -220,7 +193,7 @@ public class LidCreateTest {
             TestVertixChunk v = new TestVertixChunk();
             int i = 0;
             System.out.println("Reading vertices");
-            int maxVertices = 61170;
+            int maxVertices = 145050709;
             int processedV = 0;
             int packetSize = 10000;
             long[] p_cids = new long[packetSize];
@@ -267,7 +240,7 @@ public class LidCreateTest {
 
              */
             memory.create().getM_context().getLIDStore().getM_spareLIDStore().writeRingBufferSpareLocalIDs();
-
+            /*
             reader = new BufferedReader(new FileReader(efile));
             TestEdgeChunk e = new TestEdgeChunk();
             i = 0;
@@ -293,7 +266,7 @@ public class LidCreateTest {
                 }
             }
             //memory.create().getM_context().getLIDStore().getM_spareLIDStore().writeRingBufferSpareLocalIDs();
-
+             */
 
             memory.shutdown();
         } catch (FileNotFoundException e) {

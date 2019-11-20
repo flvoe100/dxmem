@@ -173,9 +173,22 @@ public final class Create {
         return create(p_chunkIDs, p_offset, p_count, p_size, p_consecutiveIDs, false, ChunkLockOperation.NONE);
     }
 
+    /**
+     * Create one or multiple chunks of the same size
+     *
+     * @param p_chunkIDs        Pre-allocated array for the CIDs returned
+     * @param p_offset          Offset in array to start putting the CIDs to
+     * @param p_count           Number of chunks to allocate
+     * @param p_size            Size of a single chunk
+     * @param p_consecutiveIDs  True to enforce consecutive CIDs for all chunks to allocate, false might assign non
+     *                          consecutive CIDs if available.
+     * @param p_selfDefinedLID  True to enforce costume Local ID for all chunks, false ensure normal behaviour depending
+     *                          on p_consecutiveIDs
+     * @return Number of chunks successfully created
+     */
     public int create(final long[] p_chunkIDs, final int p_offset, final int p_count, final int p_size,
-                            final boolean p_consecutiveIDs, final boolean p_customLID) {
-        return create(p_chunkIDs, p_offset, p_count, p_size, p_consecutiveIDs, p_customLID, ChunkLockOperation.NONE);
+                            final boolean p_consecutiveIDs, final boolean p_selfDefinedLID) {
+        return create(p_chunkIDs, p_offset, p_count, p_size, p_consecutiveIDs, p_selfDefinedLID, ChunkLockOperation.NONE);
     }
 
     /**
@@ -187,11 +200,13 @@ public final class Create {
      * @param p_size           Size of a single chunk
      * @param p_consecutiveIDs True to enforce consecutive CIDs for all chunks to allocate, false might assign non
      *                         consecutive CIDs if available.
+     * @param p_selfDefinedLID True to enforce costume Local ID for all chunks, false ensure normal behaviour depending
+     *                         on p_consecutiveIDs
      * @param p_lockOperation  Lock operation to execute for every chunk right after the chunks are created
      * @return Number of chunks successfully created
      */
     public int create(final long[] p_chunkIDs, final int p_offset, final int p_count, final int p_size,
-                      final boolean p_consecutiveIDs, final boolean p_customLIDs, final ChunkLockOperation p_lockOperation) {
+                      final boolean p_consecutiveIDs, final boolean p_selfDefinedLID, final ChunkLockOperation p_lockOperation) {
         assert assertLockOperationSupport(p_lockOperation);
         assert p_size > 0;
         assert p_count > 0;
@@ -202,9 +217,10 @@ public final class Create {
         if (p_consecutiveIDs) {
             m_context.getLIDStore().getConsecutive(p_chunkIDs, p_offset, p_count);
         } else {
-            if (p_customLIDs) {
+            if (p_selfDefinedLID) {
                 if(!m_context.getLIDStore().put(p_chunkIDs, p_offset, p_count)) {
                     LOGGER.error("Error in putting a lid in sparseStore");
+                    return 0;
                 };
             } else {
                 m_context.getLIDStore().get(p_chunkIDs, p_offset, p_count);

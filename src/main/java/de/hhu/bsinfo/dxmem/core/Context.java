@@ -94,6 +94,37 @@ public class Context {
     }
 
     /**
+     * Constructor
+     *
+     * @param p_ownNodeId
+     *         Node id of current instance
+     * @param p_sizeBytes
+     *         Size of heap in bytes
+     * @param  p_spareLIDStoreSize
+     *         Size of the spare local id store (ring buffer)
+     * @param p_disableChunkLock
+     *         Disable the chunk lock mechanism which increases performance but blocks the remove
+     *         and resize operations. All lock operation arguments provided on operation calls are
+     *         ignored. DXMem cannot guarantee application data consistency on parallel writes to
+     *         the same chunk. Useful for read only applications or if the application handles
+     *         synchronization when writing to chunks.
+     */
+    public Context(final short p_ownNodeId, final long p_sizeBytes, final int p_spareLIDStoreSize, final boolean p_disableChunkLock) {
+        m_nodeId = p_ownNodeId;
+        m_cidTableEntryPool = new CIDTableEntryPool();
+
+        m_heap = new Heap(p_sizeBytes);
+        m_dataStructureImExporterPool = new HeapDataStructureImExporterPool(m_heap);
+        m_cidTable = new CIDTable(p_ownNodeId, m_heap);
+        m_lidStore = new LIDStore(p_ownNodeId, m_cidTable, p_spareLIDStoreSize);
+
+        // TODO non implemented defragmenter disabled for now (hardcoded)
+        m_defragmenter = new Defragmenter(false);
+
+        m_disableChunkLock = p_disableChunkLock;
+    }
+
+    /**
      * Destroy the context
      */
     public void destroy() {
