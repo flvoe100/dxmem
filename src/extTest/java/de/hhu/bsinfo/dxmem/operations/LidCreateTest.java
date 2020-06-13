@@ -14,7 +14,6 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Random;
 
 public class LidCreateTest {
     private static final Logger LOGGER = LogManager.getFormatterLogger(LidCreateTest.class.getSimpleName());
@@ -128,9 +127,10 @@ public class LidCreateTest {
                 719,
                 721
         };
-        Random rnd = new Random();
         long[] p_CIDs = Arrays.copyOf(p_lIDs, p_lIDs.length);
-        memory.create().create(p_CIDs, 0, 100, v.sizeofObject(), false, true);
+        memory.create().create(p_CIDs, 0, p_lIDs.length, v.sizeofObject(), false, true);
+        memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
+
 
         for (int i = 0; i < p_CIDs.length; i++) {
             v = new TestVertixChunk(p_CIDs[i], p_lIDs[i]);
@@ -153,21 +153,30 @@ public class LidCreateTest {
         DXMem memory = new DXMem(DXMemoryTestConstants.NODE_ID, DXMemoryTestConstants.HEAP_SIZE_LARGE);
         TestChunk[] testChunk = new TestChunk[12];
         TestChunk dummy = new TestChunk(true);
-        long[] lids = {3, 65540};
+        long[] lids = {0};
 
         memory.create().create(lids, 0, lids.length, dummy.sizeofObject(), false, true);
+
         //  long id = memory.create().create(dummy.sizeofObject(), 0, ChunkLockOperation.NONE);
         //memory.create().create(dummy.sizeofObject(), 7, ChunkLockOperation.NONE);
         //memory.create().create(dummy.sizeofObject(), 11, ChunkLockOperation.NONE);
 
         memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
 
-
-         memory.remove().remove(ChunkID.getChunkID(DXMemoryTestConstants.NODE_ID, 3));
-        memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
-
-        //LOGGER.debug("---------------------------------");
         /*
+
+        lids = new long[]{65536};
+        memory.create().create(lids, 0, lids.length, dummy.sizeofObject(), false, true);
+        memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
+        TestChunk v = new TestChunk(true);
+        v.setID(lids[0]);
+        System.out.println(memory.put().put(v));
+
+        v = null;
+        v = new TestChunk(false);
+        v.setID(lids[0]);
+        System.out.println(memory.get().get(v));
+        //LOGGER.debug("---------------------------------");
         long[] cids = new long[65535];
         memory.create().create(cids, 0, cids.length, dummy.sizeofObject(), false, false);
         memory.create().getM_context().getLIDStore().getM_spareLIDStore().printRingBufferSpareLocalIDs();
@@ -183,7 +192,7 @@ public class LidCreateTest {
         }
         DXMem memory = new DXMem(DXMemoryTestConstants.NODE_ID, DXMemoryTestConstants.HEAP_SIZE_LARGE);
 
-        String vfile = "/home/vlz/bsinfo/datasets/datagen-8_7-zf.v";
+        String vfile = "/home/vlz/bsinfo/datasets/datagen-8_9-fb.v";
         String efile = "/home/vlz/bsinfo/datasets/dota-league/dota-league.e";
 
         try {
@@ -193,19 +202,24 @@ public class LidCreateTest {
             TestVertixChunk v = new TestVertixChunk();
             int i = 0;
             System.out.println("Reading vertices");
-            int maxVertices = 145050709;
+            int maxVertices = 10572901;
             int processedV = 0;
             int packetSize = 10000;
+            long from = 0;
+            long to = 2199028562879L;
             long[] p_cids = new long[packetSize];
             while ((line = reader.readLine()) != null) {
 
                 vid = Long.parseLong(line.split("\\s")[0]);
+                if(vid > to) {
+                    break;
+                }
                 p_cids[i] = vid;
                 i++;
                 processedV++;
                 if (i == packetSize) {
-                    memory.create().create(p_cids, 0, p_cids.length, v.sizeofObject(), false, true);
-
+                    int created = memory.create().create(p_cids, 0, p_cids.length, v.sizeofObject(), false, true);
+                    assert created == packetSize;
                     i = 0;
                     /*
                     for (int j = 0; j < packetSize; j++) {
@@ -222,6 +236,7 @@ public class LidCreateTest {
                     }
                 }
             }
+            System.out.println("processedV = " + processedV);
             reader.close();
             /*
             reader = new BufferedReader(new FileReader(vfile));

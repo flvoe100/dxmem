@@ -3,7 +3,7 @@ package de.hhu.bsinfo.dxmem.data;
 public class SpareLocalID {
     private static final long LOCALID_BITMASK = 0x0000FFFFFFFFFFFFL;
     private static final long INTERVAL_VALUE_BORDER = 32768;
-
+    public static final long MAX_SINGLE_VALUE_INTERVAL_SIZE = 65534;
 
     public static long getLID(long sparseLID) {
         return sparseLID & LOCALID_BITMASK;

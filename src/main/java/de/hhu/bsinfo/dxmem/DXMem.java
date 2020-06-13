@@ -16,34 +16,16 @@
 
 package de.hhu.bsinfo.dxmem;
 
-import java.io.File;
-
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import de.hhu.bsinfo.dxmem.core.Context;
 import de.hhu.bsinfo.dxmem.core.MemoryRuntimeException;
-import de.hhu.bsinfo.dxmem.operations.Analyze;
-import de.hhu.bsinfo.dxmem.operations.CIDStatus;
-import de.hhu.bsinfo.dxmem.operations.Create;
-import de.hhu.bsinfo.dxmem.operations.CreateReserved;
-import de.hhu.bsinfo.dxmem.operations.Dump;
-import de.hhu.bsinfo.dxmem.operations.Exists;
-import de.hhu.bsinfo.dxmem.operations.Get;
-import de.hhu.bsinfo.dxmem.operations.Lock;
-import de.hhu.bsinfo.dxmem.operations.Pinning;
-import de.hhu.bsinfo.dxmem.operations.Put;
-import de.hhu.bsinfo.dxmem.operations.RawRead;
-import de.hhu.bsinfo.dxmem.operations.RawWrite;
-import de.hhu.bsinfo.dxmem.operations.Recovery;
-import de.hhu.bsinfo.dxmem.operations.Remove;
-import de.hhu.bsinfo.dxmem.operations.Reserve;
-import de.hhu.bsinfo.dxmem.operations.Resize;
-import de.hhu.bsinfo.dxmem.operations.Size;
-import de.hhu.bsinfo.dxmem.operations.Stats;
+import de.hhu.bsinfo.dxmem.operations.*;
 import de.hhu.bsinfo.dxmonitor.state.MemState;
 import de.hhu.bsinfo.dxmonitor.state.StateUpdateException;
 import de.hhu.bsinfo.dxutils.unit.StorageUnit;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import java.io.File;
 
 /**
  * DXMem "main" class. Access to all operations offered by the the memory management
